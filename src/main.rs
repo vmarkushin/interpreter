@@ -30,6 +30,15 @@ enum Function {
     Cos,
 }
 
+impl Function {
+    pub fn call(&self, x: f64) -> f64 {
+        match self {
+            Function::Sin => x.sin(),
+            Function::Cos => x.cos(),
+        }
+    }
+}
+
 impl Debug for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
@@ -63,6 +72,12 @@ impl Constant {
             Constant::Pi => std::f64::consts::PI,
             Constant::E => std::f64::consts::E,
         }
+    }
+}
+
+impl From<Constant> for Literal {
+    fn from(c: Constant) -> Self {
+        Literal::Num(c.eval())
     }
 }
 
@@ -271,7 +286,7 @@ impl FromStr for Operator {
 fn main() {
     env_logger::Builder::new().filter_level(LevelFilter::Debug).init();
 
-    let mut expr = "pi*2";
+    let mut expr = "sin(pi*2)";
     let mut out: Vec<Token> = Vec::new();
     let mut stack: Vec<Token> = Vec::new();
 
@@ -325,6 +340,9 @@ fn main() {
         out.push(token);
     }
 
+    debug!("Out: {:?}", out);
+    debug!("Stack: {:?}\n", stack);
+
     while let Some(token) = out.pop() {
         match token {
             Token::Operator(op) => {
@@ -368,6 +386,19 @@ fn main() {
                         stack.push(token);
                     }
                 }
+            }
+            Token::Fn(f) => {
+                let t = out.pop().expect("Expected token");
+                let n = match t {
+                    Token::Lit(Literal::Num(n)) => n,
+                    Token::Const(c) => c.eval(),
+                    _ => {
+                        stack.push(token);
+                        continue
+                    }
+                };
+                let result = f.call(n);
+                stack.push(Token::Lit(Literal::Num(result)));
             }
             _ => { // not an operator, move to stack
                 stack.push(token);
