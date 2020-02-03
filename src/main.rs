@@ -1,8 +1,15 @@
-use std::cmp::Ordering;
-use std::str::FromStr;
 use log::LevelFilter;
 use log::{debug, error, trace};
-use std::fmt::{Debug, Formatter, Error};
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::convert::{TryFrom, TryInto};
+use std::fmt::{Debug, Error, Formatter};
+use std::io;
+use std::str::FromStr;
+
+pub mod tree;
+
+static mut VARS: Option<HashMap<String, Literal>> = None;
 
 #[derive(Clone, Copy, PartialEq, Eq, Ord)]
 enum Operator {
@@ -11,7 +18,6 @@ enum Operator {
     Mul,
     Div,
 }
-
 
 impl Debug for Operator {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
@@ -118,9 +124,17 @@ enum Literal {
 
 impl Literal {
     pub fn into_num(self) -> f64 {
+        self.try_into().expect("Expected number")
+    }
+}
+
+impl TryInto<f64> for Literal {
+    type Error = ();
+
+    fn try_into(self) -> Result<f64, ()> {
         match self {
-            Literal::Num(n) => n,
-            _ => panic!("Expected number")
+            Literal::Num(n) => Ok(n),
+            _ => Err(()),
         }
     }
 }
@@ -140,6 +154,7 @@ enum Token {
     Fn(Function),
     Const(Constant),
     Operator(Operator),
+    Ident(String),
     OpenBracket,
     ClosedBracket,
 }
@@ -153,13 +168,35 @@ impl Debug for Token {
             Token::Const(c) => c.fmt(f),
             Token::OpenBracket => f.write_str("("),
             Token::ClosedBracket => f.write_str(")"),
+            Token::Ident(i) => f.write_str(&i),
+        }
+    }
+}
+
+impl TryFrom<Token> for Literal {
+    type Error = ();
+
+    fn try_from(t: Token) -> Result<Self, ()> {
+        match t {
+            Token::Const(c) => Ok(Literal::Num(c.eval())),
+            Token::Lit(l) => Ok(l),
+            Token::Ident(i) => Ok(unsafe {
+                VARS.as_ref()
+                    .unwrap()
+                    .get(&i)
+                    .map(|x| x.to_owned())
+                    .expect("Unknown variable name")
+            }),
+            _ => Err(()),
         }
     }
 }
 
 impl Token {
     pub fn parse_num(num: &str) -> Result<Token, ()> {
-        num.parse::<f64>().map(|n| Token::Lit(Literal::Num(n))).map_err(|e| trace!("try parse float error {}", e))
+        num.parse::<f64>()
+            .map(|n| Token::Lit(Literal::Num(n)))
+            .map_err(|e| trace!("try parse float error {}", e))
     }
 
     pub fn parse_alpha(s: &str) -> Result<Token, ()> {
@@ -197,7 +234,7 @@ impl Token {
     }
 
     pub fn consume(s: &str) -> Result<(Token, &str), ()> {
-        if s.is_empty()  {
+        if s.is_empty() {
             return Err(());
         }
 
@@ -221,10 +258,14 @@ impl Token {
         s[..len].parse::<Token>().map(move |t| (t, &s[len..]))
     }
 
+    pub fn parse_ident(s: &str) -> Result<Token, ()> {
+        Ok(Token::Ident(s.to_owned()))
+    }
+
     pub fn into_lit(self) -> Literal {
         match self {
             Token::Lit(lit) => lit,
-            _ => panic!("Expected literal")
+            _ => panic!("Expected literal"),
         }
     }
 }
@@ -237,6 +278,7 @@ impl FromStr for Token {
             .or(Self::parse_alpha(s))
             .or(Self::parse_num(s))
             .or(Self::parse_bracket(s))
+            .or(Self::parse_ident(s))
     }
 }
 
@@ -254,7 +296,6 @@ impl Operator {
             Operator::Sub => a - b,
             Operator::Mul => a * b,
             Operator::Div => a / b,
-            _ => unreachable!(),
         }
     }
 }
@@ -283,16 +324,14 @@ impl FromStr for Operator {
     }
 }
 
-fn main() {
-    env_logger::Builder::new().filter_level(LevelFilter::Debug).init();
-
-    let mut expr = "sin(pi*2)";
+fn parse(mut program: &str) -> (Vec<Token>, Vec<String>) {
     let mut out: Vec<Token> = Vec::new();
     let mut stack: Vec<Token> = Vec::new();
+    let mut vars: Vec<String> = vec![];
 
-    while let Ok((token, s)) = Token::consume(&expr) {
-        expr = s;
-        debug!("Parsed token {:?}. Rem: {}", token, expr);
+    while let Ok((token, s)) = Token::consume(program) {
+        program = s;
+        debug!("Parsed token {:?}. Rem: {}", token, program);
 
         match &token {
             Token::Lit(_) => out.push(token),
@@ -302,22 +341,20 @@ fn main() {
                     if let Some(t) = stack.last() {
                         let flag = match &t {
                             Token::Fn(_) => true,
-                            Token::Operator(last_op) => {
-                                last_op >= operator
-                            },
-                            _ => false
+                            Token::Operator(last_op) => last_op >= operator,
+                            _ => false,
                         };
                         if flag {
                             out.push(stack.pop().unwrap())
                         } else {
-                            break
+                            break;
                         }
                     } else {
                         break;
                     }
                 }
                 stack.push(token);
-            },
+            }
             Token::OpenBracket => stack.push(token),
             Token::ClosedBracket => {
                 while let Some(t) = stack.pop() {
@@ -326,8 +363,12 @@ fn main() {
                         _ => out.push(t),
                     }
                 }
-            },
+            }
             Token::Const(_) => out.push(token),
+            Token::Ident(ident) => {
+                vars.push(ident.clone());
+                out.push(token);
+            }
         };
 
         debug!("Out: {:?}", out);
@@ -340,49 +381,64 @@ fn main() {
         out.push(token);
     }
 
-    debug!("Out: {:?}", out);
-    debug!("Stack: {:?}\n", stack);
+    (out, vars)
+}
+
+fn main() {
+    env_logger::Builder::new()
+        .filter_level(LevelFilter::Debug)
+        .init();
+
+    unsafe {
+        VARS = Some(HashMap::new());
+    }
+
+    let mut expr = "sin(pi*2)*sin(2*pi)+cos(2*pi)*cos(pi*2)+a";
+    let (mut out, vars) = parse(&mut expr);
+    debug!("Tokens: {:?}\n", out);
+
+    for v in vars {
+        let global_vars = unsafe { VARS.as_mut().unwrap() };
+        if !global_vars.contains_key(&v) {
+            println!("Enter value for var '{}': ", v);
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).unwrap();
+            let n: f64 = input.trim().parse().expect("Expected float number");
+            global_vars.insert(v, Literal::Num(n));
+        }
+    }
+
+    let mut stack: Vec<Token> = Vec::new();
 
     while let Some(token) = out.pop() {
+        debug!("Processing {:?}", token);
         match token {
             Token::Operator(op) => {
                 let b = out.last().expect("Expected b");
                 let a = out.get(out.len() - 2).expect("Expected a");
-                let operands = match (a, b) {
-                    (Token::Lit(Literal::Num(a)), Token::Lit(Literal::Num(b))) => {
-                        Some((*a, *b))
-                    }
-                    (Token::Const(a), Token::Lit(Literal::Num(b))) => {
-                        Some((a.eval(), *b))
-                    }
-                    (Token::Lit(Literal::Num(a)), Token::Const(b)) => {
-                        Some((*a, b.eval()))
-                    }
-                    (Token::Const(a), Token::Const(b)) => {
-                        Some((a.eval(), b.eval()))
-                    }
-                    _ => None
-                };
-                match operands {
-                    Some((a, b)) => {
+                let op_a: Result<f64, _> = a.clone().try_into().and_then(|l: Literal| l.try_into());
+                let op_b: Result<f64, _> = b.clone().try_into().and_then(|l: Literal| l.try_into());
+
+                match (op_a, op_b) {
+                    (Ok(a), Ok(b)) => {
                         out.pop();
                         out.pop();
 
                         let result = op.apply(a, b);
                         out.push(Token::Lit(Literal::Num(result)));
 
-                        // move tokens from stack to output until new operator is not found
+                        // move tokens from stack to output until new operator or fn is not found
                         while let Some(t) = stack.pop() {
                             match t {
-                                Token::Operator(_) => {
+                                Token::Operator(_) | Token::Fn(_) => {
                                     out.push(t);
                                     break;
-                                },
-                                _ => out.push(t)
+                                }
+                                _ => out.push(t),
                             }
                         }
-                    },
-                    None => {
+                    }
+                    _ => {
                         stack.push(token);
                     }
                 }
@@ -393,18 +449,36 @@ fn main() {
                     Token::Lit(Literal::Num(n)) => n,
                     Token::Const(c) => c.eval(),
                     _ => {
+                        out.push(t); // TODO: optimize?
                         stack.push(token);
-                        continue
+                        debug!("Out: {:?}", out);
+                        debug!("Stack: {:?}\n", stack);
+                        continue;
                     }
                 };
                 let result = f.call(n);
-                stack.push(Token::Lit(Literal::Num(result)));
+                out.push(Token::Lit(Literal::Num(result)));
+                // move tokens from stack to output until new operator or fn is not found
+                while let Some(t) = stack.pop() {
+                    match t {
+                        Token::Operator(_) | Token::Fn(_) => {
+                            out.push(t);
+                            break;
+                        }
+                        _ => out.push(t),
+                    }
+                }
             }
-            _ => { // not an operator, move to stack
+            _ => {
+                // not an operator, move to stack
                 stack.push(token);
             }
         }
         debug!("Out: {:?}", out);
         debug!("Stack: {:?}\n", stack);
+    }
+
+    if let Some(v) = stack.pop() {
+        println!("Asnwer {:?}", v);
     }
 }
