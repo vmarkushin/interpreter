@@ -5,10 +5,5 @@ authors = ["Vladislav Markushin <vladislav.markushin@bitfury.com>"]
 edition = "2018"
 
 [dependencies]
-serde = "*"
-serde_derive = "*"
-excel_writer = "*"
-chrono = "0.4.6"
-csv = "*"
 log = "*"
 env_logger = "0.7.1"
