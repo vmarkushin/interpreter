@@ -41,7 +41,14 @@ impl<'a> Cursor<'a> {
 
     /// Moves to the next character.
     pub(crate) fn bump(&mut self) -> Option<char> {
-        self.chars.next()
+        let option = self.chars.next();
+        // TODO: double-check. Find another way to skip whitespaces
+        if let Some(c) = option {
+            if c.is_whitespace() {
+                self.last_pos += 1;
+            }
+        }
+        option
     }
 
     pub fn is_eof(&self) -> bool {
