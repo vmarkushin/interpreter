@@ -3,6 +3,7 @@
 pub mod tree;
 pub mod cursor;
 pub mod tokenizer;
+pub mod syntax;
 
 use log::LevelFilter;
 use log::{debug, error, trace};
@@ -13,7 +14,8 @@ use std::fmt::{Debug, Error, Formatter};
 use std::io;
 use std::str::FromStr;
 use tokenizer::Literal;
-use crate::tokenizer::{parse, Token};
+use crate::tokenizer::Token;
+use crate::syntax::parse;
 
 pub static mut VARS: Option<HashMap<String, Literal>> = None;
 

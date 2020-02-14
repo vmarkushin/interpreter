@@ -13,6 +13,7 @@ use std::pin::Pin;
 use std::process::exit;
 use std::ptr::NonNull;
 use std::str::FromStr;
+use crate::syntax::{parenthesize, Expr};
 
 #[derive(Clone, Copy, PartialEq, Eq, Ord)]
 pub enum Operator {
@@ -33,7 +34,7 @@ impl Debug for Operator {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Function {
     Sin,
     Cos,
@@ -69,7 +70,7 @@ impl FromStr for Function {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Constant {
     Pi,
     E,
@@ -172,256 +173,6 @@ pub enum Token {
     Semicol,
 }
 
-pub enum Expr {
-    Binary {
-        left: Box<Expr>,
-        op: Token,
-        right: Box<Expr>,
-    },
-    Grouping {
-        expr: Box<Expr>,
-    },
-    Literal {
-        lit: Literal,
-    },
-    Unary {
-        op: Token,
-        right: Box<Expr>,
-    },
-}
-
-impl Expr {}
-
-struct DbgObj {
-    text: String,
-}
-
-impl DbgObj {
-    pub fn new(pad: usize, d: impl Debug) -> Self {
-        let padding: String = std::iter::repeat(' ').take(pad).collect();
-        let s = format!("{}{:?}", padding, d);
-        debug!("-> {}", s);
-        DbgObj { text: s }
-    }
-}
-
-impl Drop for DbgObj {
-    fn drop(&mut self) {
-        debug!("<- {}", self.text);
-    }
-}
-
-/**
-Grammar:
-Σ = { _number_, _bool_, -, +, *, (, ) }
-N = { E, P, Q, V }
-S = E
-P:
-    1. E -> E O E
-    1. O -> + | - | * | /
-
-Name	       Operators	Associates
-Unary	          ! -	      Right
-Multiplication	  / *	      Left
-Addition	      - +	      Left
-Comparison	   > >= < <=	  Left
-Equality	     == !=	      Left
-*/
-pub struct Parser<'a> {
-    //    tokens: Vec<Token>,
-    it: Box<dyn Iterator<Item = Token> + 'a>,
-    prev: Option<Token>,
-    curr: Option<Token>,
-    ind: usize,
-}
-
-impl<'a> Parser<'a> {
-    pub fn new(mut it: Box<dyn Iterator<Item = Token> + 'a>) -> Self {
-        let first = it.next();
-        Parser {
-            it,
-            prev: None,
-            curr: first,
-            ind: 0,
-        }
-    }
-
-    pub fn advance(&mut self) {
-        self.prev = self.curr.take();
-        self.curr = self.it.next();
-    }
-
-    pub fn consume(&mut self, t0: Token, err: &str) {
-        match &self.curr {
-            Some(t) if t.kind_like(&t0) => {
-                self.advance();
-            }
-            _ => panic!("{}", err),
-        }
-    }
-
-    pub fn matches_any(&mut self, ts: &[Token]) -> bool {
-        match &self.curr {
-            Some(t) => {
-                for ti in ts {
-                    if t.kind_like(ti) {
-                        self.advance();
-                        return true;
-                    }
-                }
-                false
-            }
-            _ => false,
-        }
-    }
-
-    pub fn matches_1(&mut self, t0: Token) -> bool {
-        self.matches_any(&[t0])
-    }
-
-    pub fn matches_2(&mut self, t0: Token, t1: Token) -> bool {
-        self.matches_any(&[t0, t1])
-    }
-
-    pub fn primary(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(12, "PRIMARY");
-
-        if self.matches_1(Kw(Keyword::True)) {
-            return box Expr::Literal {
-                lit: Literal::Bool(true),
-            };
-        }
-
-        if self.matches_1(Kw(Keyword::False)) {
-            return box Expr::Literal {
-                lit: Literal::Bool(false),
-            };
-        }
-
-        match self.curr.clone() {
-            Some(Lit(lit)) => {
-                self.advance();
-                return box Expr::Literal { lit: lit.clone() };
-            }
-            _ => {},
-        }
-
-        if self.matches_1(OpenParen) {
-            let e = self.expr();
-            self.consume(ClosedParen, "Expected ')'");
-            e
-        } else {
-            panic!("Expected expression or literal")
-        }
-    }
-
-    pub fn unary(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(10, "UNARY");
-
-        if self.matches_2(Not, Operator(Operator::Sub)) {
-            self.advance();
-            self.unary()
-        } else {
-            self.primary()
-        }
-    }
-
-    pub fn mul_div(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(8, "MUL");
-
-        let mut expr = self.unary();
-        while self.matches_2(Operator(Operator::Mul), Operator(Operator::Div)) {
-            let op = self.prev.clone().expect("expected token").clone();
-            let right = self.unary();
-            expr = box Expr::Binary {
-                left: expr,
-                op,
-                right,
-            };
-        }
-        expr
-    }
-
-    pub fn add_sub(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(6, "ADD");
-
-        let mut expr = self.mul_div();
-        while self.matches_2(Operator(Operator::Sub), Operator(Operator::Add)) {
-            let op = self.prev.clone().expect("expected token").clone();
-            let right = self.mul_div();
-            expr = box Expr::Binary {
-                left: expr,
-                op,
-                right,
-            };
-        }
-        expr
-    }
-
-    pub fn comp(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(4, "COMP");
-
-        let mut expr = self.add_sub();
-        while self.matches_any(&[Lt, Gt, LtEq, GtEq]) {
-            let op = self.prev.clone().expect("expected token").clone();
-            let right = self.add_sub();
-            expr = box Expr::Binary {
-                left: expr,
-                op,
-                right,
-            };
-        }
-        expr
-    }
-
-    pub fn eq(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(2, "EQ");
-
-        let mut expr = self.comp();
-
-        while self.matches_2(BangEq, EqEq) {
-            let op = self.prev.clone().expect("expected token").clone();
-            let right = self.comp();
-            expr = box Expr::Binary {
-                left: expr,
-                op,
-                right,
-            };
-        }
-        expr
-    }
-
-    pub fn expr(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(0, "EXPR");
-        self.eq()
-    }
-}
-
-pub fn parenthesize(name: &str, exprs: &Vec<&Box<Expr>>) -> Result<String, Error> {
-    let mut f = String::new();
-    f.write_char('(')?;
-    f.write_str(name)?;
-    for e in exprs {
-        f.write_char(' ')?;
-        write!(f, "{:?}", e)?;
-    }
-    f.write_char(')')?;
-    Ok(f)
-}
-
-impl Debug for Expr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        let s = match self {
-            Expr::Binary { op, left, right } => {
-                parenthesize(&format!("{:?}", op), &vec![left, right])?
-            }
-            Expr::Grouping { expr } => parenthesize("group", &vec![expr])?,
-            Expr::Literal { lit } => format!("{:?}", lit),
-            Expr::Unary { op, right } => parenthesize(&format!("{:?}", op), &vec![right])?,
-        };
-        f.write_str(&s)
-    }
-}
 
 impl Debug for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
@@ -482,12 +233,17 @@ impl Token {
 
     pub fn kind_like(&self, other: &Token) -> bool {
         match (self, other) {
-            (Lit(_), Lit(_))
-            | (Fn(_), Fn(_))
-            | (Const(_), Const(_))
-            | (Operator(_), Operator(_))
-            | (Ident(_), Ident(_))
-            | (Kw(_), Kw(_))
+            (Fn(v0), Fn(v1)) => v0 == v1,
+            (Const(v0), Const(v1)) => v0 == v1,
+            (Operator(v0), Operator(v1)) => v0 == v1,
+            (Kw(v0), Kw(v1)) => v0 == v1,
+            (Lit(v0), Lit(v1)) => {
+                match (v0, v1) {
+                    (Literal::Bool(v0), Literal::Bool(v1)) => v0 == v1,
+                    _ => true,
+                }
+            }
+            (Ident(_), Ident(_))
             | (OpenParen, OpenParen)
             | (ClosedParen, ClosedParen)
             | (OpenBracket, OpenBracket)
@@ -552,19 +308,6 @@ impl FromStr for Operator {
     }
 }
 
-pub fn parse(mut program: &str) -> (Vec<Token>, Vec<String>) {
-    let mut out: Vec<Token> = Vec::new();
-    let mut stack: Vec<Token> = Vec::new();
-    let mut vars: Vec<String> = vec![];
-
-    let it = box tokenize(program);
-    let mut parser = Parser::new(it);
-    let e = parser.expr();
-    dbg!(e);
-
-    (out, vars)
-}
-
 lazy_static! {
     static ref KEYWORDS: HashMap<&'static str, Keyword> = {
         let mut m = HashMap::new();
@@ -580,7 +323,7 @@ lazy_static! {
     };
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Keyword {
     If,
     Loop,
@@ -684,7 +427,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn assign_or_eq(&mut self) -> Token {
-            // TODO
+        // TODO
         match self.bump().expect("expected") {
             '=' => EqEq,
             _ => Assign,
@@ -692,7 +435,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn lt(&mut self) -> Token {
-            // TODO
+        // TODO
         match self.bump().expect("expected") {
             '=' => LtEq,
             _ => Lt,
@@ -700,7 +443,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn gt(&mut self) -> Token {
-            // TODO
+        // TODO
         match self.bump().expect("expected") {
             '=' => GtEq,
             _ => Gt,
