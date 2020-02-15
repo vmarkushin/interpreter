@@ -3,17 +3,12 @@ use crate::cursor::Cursor;
 use crate::tokenizer::Function::{Cos, Sin};
 use crate::VARS;
 use lazy_static::lazy_static;
-use log::{debug, error, trace};
+use log::debug;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::{TryFrom, TryInto};
-use std::fmt::{self, Display, Error, Formatter, Pointer, Write};
-use std::io;
-use std::pin::Pin;
-use std::process::exit;
-use std::ptr::NonNull;
+use std::fmt::{Display, Error, Formatter, Pointer, Write};
 use std::str::FromStr;
-use crate::syntax::{parenthesize, Expr, parse};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord)]
 pub enum Operator {
@@ -61,7 +56,7 @@ pub enum Function {
 }
 
 impl Function {
-    pub fn call(&self, x: f64) -> f64 {
+    pub fn call(self, x: f64) -> f64 {
         match self {
             Function::Sin => x.sin(),
             Function::Cos => x.cos(),
@@ -97,7 +92,7 @@ pub enum Constant {
 }
 
 impl Constant {
-    pub fn eval(&self) -> f64 {
+    pub fn eval(self) -> f64 {
         match self {
             Constant::Pi => std::f64::consts::PI,
             Constant::E => std::f64::consts::E,
@@ -132,16 +127,14 @@ impl FromStr for Constant {
     }
 }
 
-#[derive(PartialEq)]
-#[derive(Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Literal {
     Num(f64),
     Str(String),
     Bool(bool),
 }
 
-impl Eq for Literal {
-}
+impl Eq for Literal {}
 
 impl Literal {
     pub fn into_num(self) -> f64 {
@@ -170,8 +163,7 @@ impl Display for Literal {
     }
 }
 
-#[derive(PartialEq, Eq)]
-#[derive(Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum Token {
     Lit(Literal),
     Fn(Function),
@@ -195,7 +187,11 @@ impl Display for Token {
             Token::Lit(l) => l.fmt(f),
             Token::Fn(fun) => fun.fmt(f),
             Token::Const(c) => c.fmt(f),
-            Token::Ident(i) => { f.write_char('`')?; f.write_str(&i)?; f.write_char('`') }
+            Token::Ident(i) => {
+                f.write_char('`')?;
+                f.write_str(&i)?;
+                f.write_char('`')
+            }
             Token::Kw(kw) => kw.fmt(f),
             Token::OpenParen => f.write_str("("),
             Token::ClosedParen => f.write_str(")"),
@@ -241,12 +237,10 @@ impl Token {
             (Const(v0), Const(v1)) => v0 == v1,
             (Operator(v0), Operator(v1)) => v0 == v1,
             (Kw(v0), Kw(v1)) => v0 == v1,
-            (Lit(v0), Lit(v1)) => {
-                match (v0, v1) {
-                    (Literal::Bool(v0), Literal::Bool(v1)) => v0 == v1,
-                    _ => true,
-                }
-            }
+            (Lit(v0), Lit(v1)) => match (v0, v1) {
+                (Literal::Bool(v0), Literal::Bool(v1)) => v0 == v1,
+                _ => true,
+            },
             (Ident(_), Ident(_))
             | (OpenParen, OpenParen)
             | (ClosedParen, ClosedParen)
@@ -273,7 +267,7 @@ impl Token {
 
     pub fn as_operator(&self) -> Option<Operator> {
         if let Self::Operator(op) = self {
-            Some(op.clone())
+            Some(*op)
         } else {
             None
         }
@@ -281,7 +275,7 @@ impl Token {
 }
 
 impl Operator {
-    pub fn priority(&self) -> u32 {
+    pub fn priority(self) -> u32 {
         match self {
             Operator::Add | Operator::Sub => 1,
             Operator::Mul | Operator::Div => 2,
@@ -370,7 +364,7 @@ impl<'a> Cursor<'a> {
 
             // TODO: parse floats
             // Numeric literal
-            c @ '0'..='9' => {
+            _c @ '0'..='9' => {
                 let literal_kind = self.number();
                 Lit(literal_kind)
             }
@@ -449,7 +443,7 @@ impl<'a> Cursor<'a> {
 
     fn ident(&mut self) -> Token {
         // start is already eaten, eat the rest of identifier
-        let s = self.eat_while(is_id_continue);
+        let _s = self.eat_while(is_id_continue);
         let string = self.take_collected();
 
         if let Some(kw) = KEYWORDS.get(string.as_str()) {
@@ -460,7 +454,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn number(&mut self) -> Literal {
-        let s = self.eat_while(|x| x.is_digit(10));
+        let _s = self.eat_while(|x| x.is_digit(10));
         let string = self.take_collected();
         Literal::Num(string.parse().expect("Expected float"))
     }
@@ -468,6 +462,8 @@ impl<'a> Cursor<'a> {
 
 #[test]
 fn expr_formatting_test() -> Result<(), Error> {
+    use crate::syntax::*;
+
     let exprs = vec![];
     let s = parenthesize("", &exprs)?;
     assert_eq!(&s, "()");
@@ -487,12 +483,11 @@ fn expr_formatting_test() -> Result<(), Error> {
         },
     };
 
-    let exprs = vec![&x];
-    let s = parenthesize("", &exprs)?;
+    let exprs = &[&*x][..];
+    let s = parenthesize("", exprs)?;
     assert_eq!(&s, "( (≡ (- 1) (group 2.3)))");
     Ok(())
 }
-
 
 #[test]
 fn test_tokenizer() -> Result<(), Error> {
@@ -509,7 +504,10 @@ fn test_tokenizer() -> Result<(), Error> {
     assert_eq!(ts.as_slice(), &[Token::Lit(Literal::Num(1.0))][..]);
 
     let ts: Vec<_> = tokenize("true false").collect();
-    assert_eq!(ts.as_slice(), &[Token::Kw(Keyword::True), Token::Kw(Keyword::False)][..]);
+    assert_eq!(
+        ts.as_slice(),
+        &[Token::Kw(Keyword::True), Token::Kw(Keyword::False)][..]
+    );
 
     let ts: Vec<_> = tokenize("ident").collect();
     assert_eq!(ts.as_slice(), &[Token::Ident("ident".to_string())][..]);
@@ -518,22 +516,25 @@ fn test_tokenizer() -> Result<(), Error> {
     assert_eq!(ts.as_slice(), &[Token::Ident("truee".to_string())][..]);
 
     let ts: Vec<_> = tokenize("if a == true { b = 3 * -2; }").collect();
-    let x = ts.first().unwrap();
-    assert_eq!(ts.as_slice(), &[
-        Token::Kw(Keyword::If),
-        Token::Ident("a".to_string()),
-        Token::Operator(Operator::EqEq),
-        Token::Kw(Keyword::True),
-        Token::OpenBrace,
-        Token::Ident("b".to_string()),
-        Token::Operator(Operator::Assign),
-        Token::Lit(Literal::Num(3.0)),
-        Token::Operator(Operator::Mul),
-        Token::Operator(Operator::Sub),
-        Token::Lit(Literal::Num(2.0)),
-        Token::Semicol,
-        Token::ClosedBrace,
-    ][..]);
+    let _x = ts.first().unwrap();
+    assert_eq!(
+        ts.as_slice(),
+        &[
+            Token::Kw(Keyword::If),
+            Token::Ident("a".to_string()),
+            Token::Operator(Operator::EqEq),
+            Token::Kw(Keyword::True),
+            Token::OpenBrace,
+            Token::Ident("b".to_string()),
+            Token::Operator(Operator::Assign),
+            Token::Lit(Literal::Num(3.0)),
+            Token::Operator(Operator::Mul),
+            Token::Operator(Operator::Sub),
+            Token::Lit(Literal::Num(2.0)),
+            Token::Semicol,
+            Token::ClosedBrace,
+        ][..]
+    );
 
     Ok(())
 }

@@ -19,6 +19,7 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    #[allow(unused)]
     fn rem(&self) -> &'a str {
         &self.s[self.last_pos..]
     }
@@ -31,6 +32,7 @@ impl<'a> Cursor<'a> {
         self.nth_char(0)
     }
 
+    #[allow(unused)]
     pub(crate) fn second(&self) -> char {
         self.nth_char(1)
     }
