@@ -6,7 +6,7 @@ pub mod syntax;
 pub mod tokenizer;
 
 use crate::interpreter::Interpreter;
-use crate::syntax::parse;
+use crate::syntax::{parse, display_arr};
 use log::debug;
 use log::LevelFilter;
 use std::collections::HashMap;
@@ -23,11 +23,9 @@ fn main() {
         VARS = Some(HashMap::new());
     }
 
-    let expr = "1 - (2 * 3) < 4 != false";
-    let mut exprs = parse(&expr);
+    let expr = "print 1 - (2 * 3) < 4 != false;";
+    let mut stmts = parse(&expr);
     let mut interpreter = Interpreter::new();
-    let x = exprs.pop().unwrap();
-    debug!("Expr: {}", x);
-    let res = interpreter.eval(x).unwrap();
-    debug!("Result: {}", res);
+    display_arr(&stmts);
+    interpreter.interpret(stmts).unwrap();
 }

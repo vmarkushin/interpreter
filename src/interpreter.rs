@@ -1,4 +1,4 @@
-use crate::syntax::Result;
+use crate::syntax::{Result, Stmt};
 use crate::syntax::{Error, Expr};
 use crate::tokenizer::Literal::{self, *};
 use crate::tokenizer::Operator::{self};
@@ -120,7 +120,7 @@ impl Interpreter {
         Interpreter::default()
     }
 
-    pub fn eval(&mut self, expr: Expr) -> Result<Literal> {
+    pub fn eval(&self, expr: Expr) -> Result<Literal> {
         match expr {
             Expr::Literal { lit } => Ok(lit),
             Expr::Binary { left, op, right } => {
@@ -156,51 +156,70 @@ impl Interpreter {
             }
         }
     }
+
+    pub fn interpret(&mut self, stmts: Vec<Stmt>) -> Result<()> {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Expr(e) => { self.eval(e); },
+                Stmt::Print(e) => {
+                    let val = self.eval(e)?;
+                    println!("{}", val);
+                },
+            };
+        }
+        Ok(())
+    }
 }
 
 #[test]
-pub fn test_interpret() {
+pub fn test_interpret() -> Result<()> {
     use crate::parse;
 
     let mut interpreter = Interpreter::new();
 
     //    let mut expr = "true == !false";
     //    let mut exprs = parse(&mut expr).pop().unwrap();
-    //    let res = interpreter.eval(exprs).unwrap();
+    //    let res = interpreter.eval(?;
     //    assert_eq!(res, Literal::Bool(true));
 
-    let mut expr = "1 - 2 * 3";
-    let exprs = parse(&mut expr).pop().unwrap();
-    let res = interpreter.eval(exprs).unwrap();
+    let mut expr = "1 - 2 * 3;";
+    let exprs = parse(&mut expr).pop().unwrap().into_expr();
+    let res = interpreter.eval(exprs)?;
     assert_eq!(res, Literal::Num(-5.0));
 
-    let mut expr = "(((1) - (2) * (3)))))";
-    let exprs = parse(&mut expr).pop().unwrap();
-    let res = interpreter.eval(exprs).unwrap();
+    let mut expr = "(( (1) - (2) * (3) ));";
+    let exprs = parse(&mut expr).pop().unwrap().into_expr();
+    let res = interpreter.eval(exprs)?;
     assert_eq!(res, Literal::Num(-5.0));
 
-    let mut expr = "1 - (2 * 3)";
-    let exprs = parse(&mut expr).pop().unwrap();
-    let res = interpreter.eval(exprs).unwrap();
+    let mut expr = "1 - (2 * 3);";
+    let exprs = parse(&mut expr).pop().unwrap().into_expr();
+    let res = interpreter.eval(exprs)?;
     assert_eq!(res, Literal::Num(-5.0));
 
-    let mut expr = "(1 - 2) * 3";
-    let exprs = parse(&mut expr).pop().unwrap();
-    let res = interpreter.eval(exprs).unwrap();
+    let mut expr = "(1 - 2) * 3;";
+    let exprs = parse(&mut expr).pop().unwrap().into_expr();
+    let res = interpreter.eval(exprs)?;
     assert_eq!(res, Literal::Num(-3.0));
 
-    let mut expr = "1 - (2 * 3) < 4";
-    let exprs = parse(&mut expr).pop().unwrap();
-    let res = interpreter.eval(exprs).unwrap();
+    let mut expr = "1 - (2 * 3) < 4;";
+    let exprs = parse(&mut expr).pop().unwrap().into_expr();
+    let res = interpreter.eval(exprs)?;
     assert_eq!(res, Literal::Bool(true));
 
     //    let mut expr = "!(1 - (2 * 3) < 4)";
-    //    let mut exprs = parse(&mut expr).pop().unwrap();
-    //    let res = interpreter.eval(exprs).unwrap();
+    //    let mut exprs = parse(&mut expr).pop().unwrap().as_expr();
+    //    let res = interpreter.eval(?;
     //    assert_eq!(res, Literal::Bool(false));
 
-    let mut expr = "1 - (2 * 3) < 4 != false";
-    let exprs = parse(&mut expr).pop().unwrap();
-    let res = interpreter.eval(exprs).unwrap();
+    let mut expr = "1 - (2 * 3) < 4 != false;";
+    let exprs = parse(&mut expr).pop().unwrap().into_expr();
+    let res = interpreter.eval(exprs)?;
     assert_eq!(res, Literal::Bool(true));
+
+    let mut expr = "print 1 - (2 * 3) < 4 != false;";
+    let stmt = parse(&mut expr);
+    interpreter.interpret(stmt)?;
+
+    Ok(())
 }

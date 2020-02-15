@@ -5,7 +5,7 @@ use crate::tokenizer::{
     Token::*,
 };
 use log::debug;
-use std::fmt::{self, Display, Formatter, Write};
+use std::fmt::{self, Display, Formatter, Write, Pointer};
 use std::iter::Peekable;
 use std::result;
 
@@ -16,6 +16,36 @@ pub enum Error {
 }
 
 pub type Result<R> = result::Result<R, Error>;
+
+#[derive(Debug)]
+pub enum Stmt {
+    Expr(Expr),
+    Print(Expr),
+}
+
+impl Stmt {
+    pub fn into_expr(self) -> Expr {
+        if let Stmt::Expr(e) = self {
+            e
+        } else {
+            panic!("Expected expression")
+        }
+    }
+}
+
+impl Display for Stmt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Stmt::Expr(e) | Stmt::Print(e) => e.fmt(f),
+        }
+    }
+}
+
+pub fn display_arr<T: Display>(arr: &[T]) {
+    for s in arr {
+        println!("{}", s);
+    }
+}
 
 #[derive(Debug)]
 pub enum Expr {
@@ -295,25 +325,35 @@ impl<'a> Parser<'a> {
         self.eq()
     }
 
+    pub fn expr_statement(&mut self) -> Stmt {
+        let expr = *self.expr();
+        self.consume(Semicol, "expected ';' after expression");
+        Stmt::Expr(expr)
+    }
+
     pub fn expr(&mut self) -> Box<Expr> {
-        //        let dobj = DbgObj::new("EXPR");
-        //        if self.matches_1(Keyword::If) {
-        //            let e = self.eq();
-        //            self.consume(OpenBracket)
-        //        }
         self.eq()
     }
 
-    pub fn stmt(&mut self) -> Box<Expr> {
-        let _dobj = DbgObj::new("STMT");
-        self.expr()
+    pub fn print(&mut self) -> Stmt {
+        let expr = self.expr();
+        self.consume(Semicol, "expected ';' after expression");
+        Stmt::Print(*expr)
     }
 
-    pub fn program(&mut self) -> Vec<Expr> {
-        //        self.it.peekable()
+    pub fn stmt(&mut self) -> Stmt {
+        let _dobj = DbgObj::new("STMT");
+        if self.matches_1(Kw(Keyword::Print)) {
+            self.print()
+        } else {
+            self.expr_statement()
+        }
+    }
+
+    pub fn program(&mut self) -> Vec<Stmt> {
         let mut v = vec![];
         while self.curr.is_some() {
-            v.push(*self.stmt());
+            v.push(self.stmt());
         }
         v
     }
@@ -365,9 +405,8 @@ impl Display for Expr {
     }
 }
 
-pub fn parse(program: &str) -> Vec<Expr> {
+pub fn parse(program: &str) -> Vec<Stmt> {
     let it = box tokenize(program);
     let mut parser = Parser::new(it);
-    let e = *parser.stmt();
-    vec![e]
+    parser.program()
 }

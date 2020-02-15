@@ -178,6 +178,7 @@ pub enum Token {
     OpenBrace,
     ClosedBrace,
     Semicol,
+    Print,
 }
 
 impl Display for Token {
@@ -200,6 +201,7 @@ impl Display for Token {
             Token::OpenBrace => f.write_str("["),
             Token::ClosedBrace => f.write_str("]"),
             Token::Semicol => f.write_str(";"),
+            Token::Print => f.write_str("print"),
         }
     }
 }
@@ -491,6 +493,9 @@ fn expr_formatting_test() -> Result<(), Error> {
 
 #[test]
 fn test_tokenizer() -> Result<(), Error> {
+    let ts: Vec<_> = tokenize("print").collect();
+    assert_eq!(ts.as_slice(), &[Token::Kw(Keyword::Print)][..]);
+
     let ts: Vec<_> = tokenize("=").collect();
     assert_eq!(ts.as_slice(), &[Token::Operator(Operator::Assign)][..]);
 
