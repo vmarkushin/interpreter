@@ -29,14 +29,15 @@ pub enum Expr {
     },
 }
 
-impl Expr {}
+static mut DBG_OBJ_PAD: usize = 0;
 
 struct DbgObj {
     text: String,
 }
 
 impl DbgObj {
-    pub fn new(pad: usize, d: impl Debug) -> Self {
+    pub fn new(d: impl Debug) -> Self {
+        let pad = unsafe { DBG_OBJ_PAD += 2; DBG_OBJ_PAD };
         let padding: String = std::iter::repeat(' ').take(pad).collect();
         let s = format!("{}{:?}", padding, d);
         debug!("-> {}", s);
@@ -46,6 +47,7 @@ impl DbgObj {
 
 impl Drop for DbgObj {
     fn drop(&mut self) {
+        unsafe { DBG_OBJ_PAD -= 2; }
         debug!("<- {}", self.text);
     }
 }
@@ -122,7 +124,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn primary(&mut self) -> Result<Box<Expr>> {
-        let dobj = DbgObj::new(12, "PRIMARY");
+        let dobj = DbgObj::new("PRIMARY");
 
         if self.matches_1(Kw(Keyword::True)) {
             return Ok(box Expr::Literal {
@@ -154,7 +156,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn unary(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(10, "UNARY");
+        let dobj = DbgObj::new("UNARY");
 
         if let Some(t) = &self.curr {
             match t {
@@ -178,7 +180,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn mul_div(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(8, "MUL");
+        let dobj = DbgObj::new("MUL");
 
         let mut expr = self.unary();
         while self.matches_2(Operator(Operator::Mul), Operator(Operator::Div)) {
@@ -194,7 +196,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn add_sub(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(6, "ADD");
+        let dobj = DbgObj::new("ADD");
 
         let mut expr = self.mul_div();
         while self.matches_2(Operator(Operator::Sub), Operator(Operator::Add)) {
@@ -210,7 +212,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn comp(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(4, "COMP");
+        let dobj = DbgObj::new("COMP");
 
         let mut expr = self.add_sub();
         while self.matches_any(&[Lt, Gt, LtEq, GtEq]) {
@@ -226,7 +228,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn eq(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(2, "EQ");
+        let dobj = DbgObj::new("EQ");
 
         let mut expr = self.comp();
 
@@ -243,7 +245,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn block_expr(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(0, "BLOCK EXPR");
+        let dobj = DbgObj::new("BLOCK EXPR");
         self.consume(OpenBracket, "Expected '{'");
         let expr = self.expr();
         self.consume(ClosedBracket, "Expected '}'");
@@ -255,7 +257,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn expr(&mut self) -> Box<Expr> {
-//        let dobj = DbgObj::new(0, "EXPR");
+//        let dobj = DbgObj::new("EXPR");
 //        if self.matches_1(Keyword::If) {
 //            let e = self.eq();
 //            self.consume(OpenBracket)
@@ -264,7 +266,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn stmt(&mut self) -> Box<Expr> {
-        let dobj = DbgObj::new(0, "STMT");
+        let dobj = DbgObj::new("STMT");
         self.expr()
     }
 
