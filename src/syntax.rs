@@ -68,7 +68,6 @@ Equality	     == !=	      Left
 */
 pub struct Parser<'a> {
     it: Peekable<Box<dyn Iterator<Item = Token> + 'a>>,
-//    it: Box<dyn Iterator<Item = Token> + 'a>,
     prev: Option<Token>,
     curr: Option<Token>,
     ind: usize,
@@ -170,8 +169,9 @@ impl<'a> Parser<'a> {
         }
 
         if self.matches_2(Not, Operator(Operator::Sub)) {
-            self.advance();
-            self.unary()
+            let op = self.prev.clone().unwrap();
+            let right = self.unary();
+            box Expr::Unary { op, right }
         } else {
             self.primary().unwrap()
         }
