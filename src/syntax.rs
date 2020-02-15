@@ -1,20 +1,22 @@
-use crate::tokenizer::{Token, Literal, Token::*, Operator, Keyword, tokenize};
-use std::fmt::{self, Debug, Write, Formatter};
+use crate::tokenizer::{Token, Literal, Token::*, Operator::{self, *}, Keyword, tokenize};
+use std::fmt::{self, Display, Write, Formatter};
 use log::debug;
 use std::iter::Peekable;
 use std::result;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Error {
-    ExpectedExpression
+    ExpectedExpression,
+    UnsopportedOperation,
 }
 
 pub type Result<R> = result::Result<R, Error>;
 
+#[derive(Debug)]
 pub enum Expr {
     Binary {
         left: Box<Expr>,
-        op: Token,
+        op: Operator,
         right: Box<Expr>,
     },
     Grouping {
@@ -24,7 +26,7 @@ pub enum Expr {
         lit: Literal,
     },
     Unary {
-        op: Token,
+        op: Operator,
         right: Box<Expr>,
     },
 }
@@ -36,10 +38,10 @@ struct DbgObj {
 }
 
 impl DbgObj {
-    pub fn new(d: impl Debug) -> Self {
+    pub fn new(d: impl Display) -> Self {
         let pad = unsafe { DBG_OBJ_PAD += 2; DBG_OBJ_PAD };
         let padding: String = std::iter::repeat(' ').take(pad).collect();
-        let s = format!("{}{:?}", padding, d);
+        let s = format!("{}{}", padding, d);
         debug!("-> {}", s);
         DbgObj { text: s }
     }
@@ -162,7 +164,7 @@ impl<'a> Parser<'a> {
             match t {
                 &Token::Operator(op) => {
                     match op {
-                        Operator::Sub => (),
+                        Sub => (),
                         _ => panic!("Expected expression, found operator: {:?}", op)
                     }
                 }
@@ -170,8 +172,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if self.matches_2(Not, Operator(Operator::Sub)) {
-            let op = self.prev.clone().unwrap();
+        if self.matches_2(Operator(Not), Operator(Sub)) {
+            let op = self.prev.clone().unwrap().as_operator().expect("expected operator");
             let right = self.unary();
             box Expr::Unary { op, right }
         } else {
@@ -183,8 +185,8 @@ impl<'a> Parser<'a> {
         let dobj = DbgObj::new("MUL");
 
         let mut expr = self.unary();
-        while self.matches_2(Operator(Operator::Mul), Operator(Operator::Div)) {
-            let op = self.prev.clone().expect("expected token").clone();
+        while self.matches_2(Operator(Mul), Operator(Div)) {
+            let op = self.prev.clone().expect("expected token").clone().as_operator().expect("expected operator");
             let right = self.unary();
             expr = box Expr::Binary {
                 left: expr,
@@ -199,8 +201,8 @@ impl<'a> Parser<'a> {
         let dobj = DbgObj::new("ADD");
 
         let mut expr = self.mul_div();
-        while self.matches_2(Operator(Operator::Sub), Operator(Operator::Add)) {
-            let op = self.prev.clone().expect("expected token").clone();
+        while self.matches_2(Operator(Sub), Operator(Add)) {
+            let op = self.prev.clone().expect("expected token").clone().as_operator().expect("expected operator");
             let right = self.mul_div();
             expr = box Expr::Binary {
                 left: expr,
@@ -215,8 +217,8 @@ impl<'a> Parser<'a> {
         let dobj = DbgObj::new("COMP");
 
         let mut expr = self.add_sub();
-        while self.matches_any(&[Lt, Gt, LtEq, GtEq]) {
-            let op = self.prev.clone().expect("expected token").clone();
+        while self.matches_any(&[Operator(Lt), Operator(Gt), Operator(LtEq), Operator(GtEq)]) {
+            let op = self.prev.clone().expect("expected token").clone().as_operator().expect("expected operator");
             let right = self.add_sub();
             expr = box Expr::Binary {
                 left: expr,
@@ -232,8 +234,8 @@ impl<'a> Parser<'a> {
 
         let mut expr = self.comp();
 
-        while self.matches_2(BangEq, EqEq) {
-            let op = self.prev.clone().expect("expected token").clone();
+        while self.matches_2(Operator(BangEq), Operator(EqEq)) {
+            let op = self.prev.clone().expect("expected token").clone().as_operator().expect("expected operator");
             let right = self.comp();
             expr = box Expr::Binary {
                 left: expr,
@@ -312,35 +314,29 @@ pub fn parenthesize(name: &str, exprs: &Vec<&Box<Expr>>) -> result::Result<Strin
     f.write_str(name)?;
     for e in exprs {
         f.write_char(' ')?;
-        write!(f, "{:?}", e)?;
+        write!(f, "{}", e)?;
     }
     f.write_char(')')?;
     Ok(f)
 }
 
-impl Debug for Expr {
+impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let s = match self {
             Expr::Binary { op, left, right } => {
-                parenthesize(&format!("{:?}", op), &vec![left, right])?
+                parenthesize(&format!("{}", op), &vec![left, right])?
             }
             Expr::Grouping { expr } => parenthesize("group", &vec![expr])?,
-            Expr::Literal { lit } => format!("{:?}", lit),
-            Expr::Unary { op, right } => parenthesize(&format!("{:?}", op), &vec![right])?,
+            Expr::Literal { lit } => format!("{}", lit),
+            Expr::Unary { op, right } => parenthesize(&format!("{}", op), &vec![right])?,
         };
         f.write_str(&s)
     }
 }
 
-pub fn parse(mut program: &str) -> (Vec<Token>, Vec<String>) {
-    let mut out: Vec<Token> = Vec::new();
-    let mut stack: Vec<Token> = Vec::new();
-    let mut vars: Vec<String> = vec![];
-
+pub fn parse(mut program: &str) -> Vec<Box<Expr>> {
     let it = box tokenize(program);
     let mut parser = Parser::new(it);
     let e = parser.stmt();
-    dbg!(e);
-
-    (out, vars)
+    vec![e]
 }

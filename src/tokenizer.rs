@@ -7,34 +7,54 @@ use log::{debug, error, trace};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::{TryFrom, TryInto};
-use std::fmt::{Debug, Error, Formatter, Pointer, Write};
+use std::fmt::{self, Display, Error, Formatter, Pointer, Write};
 use std::io;
 use std::pin::Pin;
 use std::process::exit;
 use std::ptr::NonNull;
 use std::str::FromStr;
-use crate::syntax::{parenthesize, Expr};
+use crate::syntax::{parenthesize, Expr, parse};
 
-#[derive(Clone, Copy, PartialEq, Eq, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord)]
 pub enum Operator {
     Add,
     Sub,
     Mul,
     Div,
+    Assign,
+    BangEq,
+    Not,
+    Gt,
+    Lt,
+    GtEq,
+    LtEq,
+    EqEq,
+    And,
+    Or,
 }
 
-impl Debug for Operator {
+impl Display for Operator {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             Operator::Add => f.write_str("+"),
             Operator::Sub => f.write_str("-"),
             Operator::Mul => f.write_str("*"),
             Operator::Div => f.write_str("/"),
+            Operator::Assign => f.write_str("="),
+            Operator::BangEq => f.write_str("≠"),
+            Operator::Gt => f.write_str(">"),
+            Operator::Lt => f.write_str("<"),
+            Operator::GtEq => f.write_str("≥"),
+            Operator::LtEq => f.write_str("≤"),
+            Operator::EqEq => f.write_str("≡"),
+            Operator::And => f.write_str("∧"),
+            Operator::Or => f.write_str("∨"),
+            Operator::Not => f.write_str("!"),
         }
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Function {
     Sin,
     Cos,
@@ -49,7 +69,7 @@ impl Function {
     }
 }
 
-impl Debug for Function {
+impl Display for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             Function::Sin => f.write_str("sin"),
@@ -70,7 +90,7 @@ impl FromStr for Function {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Constant {
     Pi,
     E,
@@ -91,7 +111,7 @@ impl From<Constant> for Literal {
     }
 }
 
-impl Debug for Constant {
+impl Display for Constant {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             Constant::Pi => f.write_str("π"),
@@ -112,11 +132,15 @@ impl FromStr for Constant {
     }
 }
 
-#[derive(Clone)]
+#[derive(PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Literal {
     Num(f64),
     Str(String),
     Bool(bool),
+}
+
+impl Eq for Literal {
 }
 
 impl Literal {
@@ -136,7 +160,7 @@ impl TryInto<f64> for Literal {
     }
 }
 
-impl Debug for Literal {
+impl Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             Literal::Num(n) => n.fmt(f),
@@ -146,7 +170,8 @@ impl Debug for Literal {
     }
 }
 
-#[derive(Clone)]
+#[derive(PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Token {
     Lit(Literal),
     Fn(Function),
@@ -160,46 +185,25 @@ pub enum Token {
     ClosedBracket,
     OpenBrace,
     ClosedBrace,
-    Assign,
-    BangEq,
-    Not,
-    Gt,
-    Lt,
-    GtEq,
-    LtEq,
-    EqEq,
-    And,
-    Or,
     Semicol,
 }
 
-
-impl Debug for Token {
+impl Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             Token::Operator(o) => o.fmt(f),
             Token::Lit(l) => l.fmt(f),
             Token::Fn(fun) => fun.fmt(f),
             Token::Const(c) => c.fmt(f),
+            Token::Ident(i) => { f.write_char('`')?; f.write_str(&i)?; f.write_char('`') }
+            Token::Kw(kw) => kw.fmt(f),
             Token::OpenParen => f.write_str("("),
             Token::ClosedParen => f.write_str(")"),
             Token::OpenBracket => f.write_str("{"),
             Token::ClosedBracket => f.write_str("}"),
             Token::OpenBrace => f.write_str("["),
             Token::ClosedBrace => f.write_str("]"),
-            Token::Ident(i) => f.write_str(&i),
-            Kw(kw) => kw.fmt(f),
-            Assign => f.write_str("="),
-            Semicol => f.write_str(";"),
-            BangEq => f.write_str("≠"),
-            Gt => f.write_str(">"),
-            Lt => f.write_str("<"),
-            GtEq => f.write_str("≥"),
-            LtEq => f.write_str("≤"),
-            EqEq => f.write_str("≡"),
-            And => f.write_str("∧"),
-            Or => f.write_str("∨"),
-            Not => f.write_str("!"),
+            Token::Semicol => f.write_str(";"),
         }
     }
 }
@@ -250,18 +254,28 @@ impl Token {
             | (ClosedBracket, ClosedBracket)
             | (OpenBrace, OpenBrace)
             | (ClosedBrace, ClosedBrace)
-            | (Assign, Assign)
-            | (BangEq, BangEq)
-            | (Not, Not)
-            | (Gt, Gt)
-            | (Lt, Lt)
-            | (GtEq, GtEq)
-            | (LtEq, LtEq)
-            | (EqEq, EqEq)
-            | (And, And)
-            | (Or, Or)
             | (Semicol, Semicol) => true,
             _ => false,
+        }
+    }
+
+    pub fn is_operator(&self) -> bool {
+        matches!(self, Self::Operator(_))
+    }
+
+    pub fn is_literal(&self) -> bool {
+        matches!(self, Self::Lit(_))
+    }
+
+    pub fn is_ident(&self) -> bool {
+        matches!(self, Self::Ident(_))
+    }
+
+    pub fn as_operator(&self) -> Option<Operator> {
+        if let Self::Operator(op) = self {
+            Some(op.clone())
+        } else {
+            None
         }
     }
 }
@@ -271,15 +285,7 @@ impl Operator {
         match self {
             Operator::Add | Operator::Sub => 1,
             Operator::Mul | Operator::Div => 2,
-        }
-    }
-
-    pub fn apply(&self, a: f64, b: f64) -> f64 {
-        match self {
-            Operator::Add => a + b,
-            Operator::Sub => a - b,
-            Operator::Mul => a * b,
-            Operator::Div => a / b,
+            _ => 0,
         }
     }
 }
@@ -287,24 +293,6 @@ impl Operator {
 impl PartialOrd for Operator {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.priority().partial_cmp(&other.priority())
-    }
-}
-
-impl FromStr for Operator {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.len() != 1 {
-            Err(())
-        } else {
-            match s {
-                "+" => Ok(Operator::Add),
-                "-" => Ok(Operator::Sub),
-                "*" => Ok(Operator::Mul),
-                "/" => Ok(Operator::Div),
-                _ => Err(()),
-            }
-        }
     }
 }
 
@@ -343,7 +331,7 @@ pub fn tokenize(mut input: &str) -> impl Iterator<Item = Token> + '_ {
 
         let (mut token, len) = Cursor::new(input).advance_token();
         input = &input[len..];
-        debug!("Parsed token '{:?}'. Rem: {}", token, input);
+        debug!("Parsed token '{}'. Rem: {}", token, input);
 
         let mut funcs: BTreeMap<String, Function> = BTreeMap::new();
         funcs.insert("sin".to_owned(), Sin);
@@ -380,6 +368,7 @@ impl<'a> Cursor<'a> {
             // Identifier
             c if is_id_start(c) => self.ident(),
 
+            // TODO: parse floats
             // Numeric literal
             c @ '0'..='9' => {
                 let literal_kind = self.number();
@@ -388,13 +377,17 @@ impl<'a> Cursor<'a> {
 
             '(' => OpenParen,
             ')' => ClosedParen,
+            '{' => OpenBrace,
+            '}' => ClosedBrace,
+            '[' => OpenBracket,
+            ']' => ClosedBracket,
             '-' => Operator(Operator::Sub),
             '+' => Operator(Operator::Add),
             '/' => Operator(Operator::Div),
             '*' => Operator(Operator::Mul),
             '=' => self.assign_or_eq(),
             ';' => Semicol,
-            '!' => Not,
+            '!' => self.not_or_neq(),
             '<' => self.lt(),
             '>' => self.gt(),
 
@@ -427,26 +420,30 @@ impl<'a> Cursor<'a> {
     }
 
     fn assign_or_eq(&mut self) -> Token {
-        // TODO
-        match self.bump().expect("expected") {
-            '=' => EqEq,
-            _ => Assign,
+        match self.bump() {
+            Some('=') => Operator(Operator::EqEq),
+            _ => Operator(Operator::Assign),
+        }
+    }
+
+    fn not_or_neq(&mut self) -> Token {
+        match self.bump() {
+            Some('=') => Operator(Operator::BangEq),
+            _ => Operator(Operator::Not),
         }
     }
 
     fn lt(&mut self) -> Token {
-        // TODO
-        match self.bump().expect("expected") {
-            '=' => LtEq,
-            _ => Lt,
+        match self.bump() {
+            Some('=') => Operator(Operator::LtEq),
+            _ => Operator(Operator::Lt),
         }
     }
 
     fn gt(&mut self) -> Token {
-        // TODO
-        match self.bump().expect("expected") {
-            '=' => GtEq,
-            _ => Gt,
+        match self.bump() {
+            Some('=') => Operator(Operator::GtEq),
+            _ => Operator(Operator::Gt),
         }
     }
 
@@ -465,7 +462,6 @@ impl<'a> Cursor<'a> {
     fn number(&mut self) -> Literal {
         let s = self.eat_while(|x| x.is_digit(10));
         let string = self.take_collected();
-        dbg!(&string);
         Literal::Num(string.parse().expect("Expected float"))
     }
 }
@@ -478,12 +474,12 @@ fn expr_formatting_test() -> Result<(), Error> {
 
     let x = box Expr::Binary {
         left: box Expr::Unary {
-            op: Token::Operator(Operator::Sub),
+            op: Operator::Sub,
             right: box Expr::Literal {
                 lit: Literal::Num(1.0),
             },
         },
-        op: Token::Operator(Operator::Mul),
+        op: Operator::EqEq,
         right: box Expr::Grouping {
             expr: box Expr::Literal {
                 lit: Literal::Num(2.3),
@@ -493,6 +489,51 @@ fn expr_formatting_test() -> Result<(), Error> {
 
     let exprs = vec![&x];
     let s = parenthesize("", &exprs)?;
-    assert_eq!(&s, "( (* (- 1.0) (group 2.3)))");
+    assert_eq!(&s, "( (≡ (- 1) (group 2.3)))");
+    Ok(())
+}
+
+
+#[test]
+fn test_tokenizer() -> Result<(), Error> {
+    let ts: Vec<_> = tokenize("=").collect();
+    assert_eq!(ts.as_slice(), &[Token::Operator(Operator::Assign)][..]);
+
+    let ts: Vec<_> = tokenize("==").collect();
+    assert_eq!(ts.as_slice(), &[Token::Operator(Operator::EqEq)][..]);
+
+    let ts: Vec<_> = tokenize("!=").collect();
+    assert_eq!(ts.as_slice(), &[Token::Operator(Operator::BangEq)][..]);
+
+    let ts: Vec<_> = tokenize("1").collect();
+    assert_eq!(ts.as_slice(), &[Token::Lit(Literal::Num(1.0))][..]);
+
+    let ts: Vec<_> = tokenize("true false").collect();
+    assert_eq!(ts.as_slice(), &[Token::Kw(Keyword::True), Token::Kw(Keyword::False)][..]);
+
+    let ts: Vec<_> = tokenize("ident").collect();
+    assert_eq!(ts.as_slice(), &[Token::Ident("ident".to_string())][..]);
+
+    let ts: Vec<_> = tokenize("truee").collect();
+    assert_eq!(ts.as_slice(), &[Token::Ident("truee".to_string())][..]);
+
+    let ts: Vec<_> = tokenize("if a == true { b = 3 * -2; }").collect();
+    let x = ts.first().unwrap();
+    assert_eq!(ts.as_slice(), &[
+        Token::Kw(Keyword::If),
+        Token::Ident("a".to_string()),
+        Token::Operator(Operator::EqEq),
+        Token::Kw(Keyword::True),
+        Token::OpenBrace,
+        Token::Ident("b".to_string()),
+        Token::Operator(Operator::Assign),
+        Token::Lit(Literal::Num(3.0)),
+        Token::Operator(Operator::Mul),
+        Token::Operator(Operator::Sub),
+        Token::Lit(Literal::Num(2.0)),
+        Token::Semicol,
+        Token::ClosedBrace,
+    ][..]);
+
     Ok(())
 }
