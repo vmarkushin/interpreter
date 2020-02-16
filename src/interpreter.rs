@@ -1,5 +1,5 @@
-use crate::syntax::{Result, Stmt};
 use crate::syntax::{Error, Expr};
+use crate::syntax::{Result, Stmt};
 use crate::tokenizer::Literal::{self, *};
 use crate::tokenizer::Operator::{self};
 use std::cmp::Ordering;
@@ -159,11 +159,13 @@ impl Interpreter {
 
     pub fn execute(&mut self, stmt: Stmt) -> Result<()> {
         match stmt {
-            Stmt::Expr(e) => { self.eval(e)?; },
+            Stmt::Expr(e) => {
+                self.eval(e)?;
+            }
             Stmt::Print(e) => {
                 let val = self.eval(e)?;
                 println!("{}", val);
-            },
+            }
         };
         Ok(())
     }

@@ -1,5 +1,11 @@
-use crate::tokenizer::{Keyword, Literal, Operator::{self, *}, TokenKind, TokenKind::*, Tokenizer, Token};
-use log::{trace};
+use crate::tokenizer::{
+    Keyword, Literal,
+    Operator::{self, *},
+    Token, TokenKind,
+    TokenKind::*,
+    Tokenizer,
+};
+use log::trace;
 use std::fmt::{self, Display, Formatter, Write};
 use std::iter::Peekable;
 use std::result;
@@ -36,7 +42,7 @@ impl Display for Stmt {
                 f.write_str("(print ")?;
                 e.fmt(f)?;
                 f.write_str(")")
-            },
+            }
         }
     }
 }
@@ -377,8 +383,8 @@ impl<'a> Parser<'a> {
 
             if let Some(t) = self.peek_kind() {
                 match t {
-                    Kw(Keyword::Var) | Kw(Keyword::If) | Kw(Keyword::Loop)
-                    | Kw(Keyword::Ret) | Kw(Keyword::Print) => return,
+                    Kw(Keyword::Var) | Kw(Keyword::If) | Kw(Keyword::Loop) | Kw(Keyword::Ret)
+                    | Kw(Keyword::Print) => return,
                     _ => (),
                 }
             }

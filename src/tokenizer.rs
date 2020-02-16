@@ -3,11 +3,11 @@ use crate::VARS;
 use lazy_static::lazy_static;
 use log::debug;
 use std::cmp::Ordering;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter, Write};
-use std::str::{FromStr, Chars};
 use std::iter::Peekable;
+use std::str::{Chars, FromStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord)]
 pub enum Operator {
@@ -378,7 +378,7 @@ impl<'a> Tokenizer<'a> {
                 } else {
                     Operator(Operator::Div)
                 }
-            },
+            }
             '*' => Operator(Operator::Mul),
             '=' => self.assign_or_eq(),
             ';' => Semicol,
@@ -389,9 +389,9 @@ impl<'a> Tokenizer<'a> {
                 self.col = 0;
                 self.line += 1;
                 return None;
-            },
+            }
             // String literal
-//            '"' => {}
+            // '"' => {}
             _ => Unknown,
         };
 
@@ -399,11 +399,18 @@ impl<'a> Tokenizer<'a> {
 
         let token = Token {
             kind: token_kind,
-            meta: TokenMeta { lexeme, line: self.line, column: self.col }
+            meta: TokenMeta {
+                lexeme,
+                line: self.line,
+                column: self.col,
+            },
         };
 
         let remaining_input: String = self.input.chars().skip(self.curr).collect();
-        debug!("Parsed token '{}' ({}). Rem: {}", token.kind, token.meta.lexeme, remaining_input);
+        debug!(
+            "Parsed token '{}' ({}). Rem: {}",
+            token.kind, token.meta.lexeme, remaining_input
+        );
 
         Some(token)
     }
@@ -415,7 +422,11 @@ impl<'a> Tokenizer<'a> {
     }
 
     pub(crate) fn curr_lexeme(&mut self) -> String {
-        self.input.chars().skip(self.start).take(self.curr - self.start).collect()
+        self.input
+            .chars()
+            .skip(self.start)
+            .take(self.curr - self.start)
+            .collect()
     }
 
     fn eat_matches(&mut self, expect: char) -> bool {
@@ -427,8 +438,8 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn eat_while<F>(&mut self, mut predicate: F)
-        where
-            F: FnMut(char) -> bool,
+    where
+        F: FnMut(char) -> bool,
     {
         while !self.is_eof() && predicate(*self.it.peek().unwrap()) {
             let _ = self.next_char();
@@ -577,7 +588,9 @@ fn test_tokenizer_kinds() -> fmt::Result {
     let ts: Vec<_> = tokenize("truee").map(Token::into_kind).collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Ident("truee".to_string())][..]);
 
-    let ts: Vec<_> = tokenize("if a == true { b = 3 * -2; }").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("if a == true { b = 3 * -2; }")
+        .map(Token::into_kind)
+        .collect();
     let _x = ts.first().unwrap();
     assert_eq!(
         ts.as_slice(),

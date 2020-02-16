@@ -6,7 +6,7 @@ pub mod syntax;
 pub mod tokenizer;
 
 use crate::interpreter::Interpreter;
-use crate::syntax::{parse, display_arr};
+use crate::syntax::{display_arr, parse};
 use log::LevelFilter;
 use std::collections::HashMap;
 use tokenizer::Literal;
