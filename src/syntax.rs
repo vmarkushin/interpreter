@@ -100,22 +100,6 @@ impl Drop for DbgObj {
     }
 }
 
-/**
-Grammar:
-Σ = { _number_, _bool_, -, +, *, (, ) }
-N = { E, P, Q, V }
-S = E
-P:
-    1. E ::= E O E
-    1. O -> + | - | * | /
-
-Name            Operators    Associates
-Unary             ! -         Right
-Multiplication    / *         Left
-Addition          - +         Left
-Comparison     > >= < <=      Left
-Equality         == !=        Left
-*/
 pub struct Parser<'a> {
     it: Peekable<Box<dyn Iterator<Item = Token> + 'a>>,
     prev: Option<Token>,

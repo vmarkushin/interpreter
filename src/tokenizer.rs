@@ -391,7 +391,7 @@ impl<'a> Tokenizer<'a> {
                 return None;
             }
             // String literal
-            // '"' => {}
+            '"' => self.string(),
             _ => Unknown,
         };
 
@@ -498,6 +498,32 @@ impl<'a> Tokenizer<'a> {
         self.eat_while(|x| x.is_digit(10));
         let string = self.curr_lexeme();
         Literal::Num(string.parse().expect("Expected float"))
+    }
+
+    fn string(&mut self) -> TokenKind {
+        let start_line = self.line;
+        let mut terminated = false;
+
+        while let Some(c) = self.next_char() {
+            if c == '\n' {
+                panic!("Unexpected new line in string at {}", self.line);
+            } else if c == '"' {
+                terminated = true;
+                break;
+            }
+        }
+
+        if !terminated {
+            panic!("Unterminated string at {}", start_line);
+        }
+
+        let string = self
+            .input
+            .chars()
+            .skip(self.start + 1)
+            .take(self.curr - self.start - 2)
+            .collect();
+        TokenKind::Lit(Literal::Str(string))
     }
 }
 
