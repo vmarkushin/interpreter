@@ -377,7 +377,7 @@ impl<'a> Parser<'a> {
 
             if let Some(t) = self.peek_kind() {
                 match t {
-                    Kw(Keyword::Var) | Kw(Keyword::If) | Kw(Keyword::Fn) | Kw(Keyword::Loop)
+                    Kw(Keyword::Var) | Kw(Keyword::If) | Kw(Keyword::Loop)
                     | Kw(Keyword::Ret) | Kw(Keyword::Print) => return,
                     _ => (),
                 }

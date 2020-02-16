@@ -49,42 +49,6 @@ impl Display for Operator {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Function {
-    Sin,
-    Cos,
-}
-
-impl Function {
-    pub fn call(self, x: f64) -> f64 {
-        match self {
-            Function::Sin => x.sin(),
-            Function::Cos => x.cos(),
-        }
-    }
-}
-
-impl Display for Function {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Function::Sin => f.write_str("sin"),
-            Function::Cos => f.write_str("cos"),
-        }
-    }
-}
-
-impl FromStr for Function {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "sin" => Ok(Function::Sin),
-            "cos" => Ok(Function::Cos),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Constant {
     Pi,
     E,
@@ -165,7 +129,6 @@ impl Display for Literal {
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum TokenKind {
     Lit(Literal),
-    Fn(Function),
     Const(Constant),
     Operator(Operator),
     Ident(String),
@@ -208,7 +171,6 @@ impl Display for TokenKind {
         match self {
             TokenKind::Operator(o) => o.fmt(f),
             TokenKind::Lit(l) => l.fmt(f),
-            TokenKind::Fn(fun) => fun.fmt(f),
             TokenKind::Const(c) => c.fmt(f),
             TokenKind::Ident(i) => {
                 f.write_char('`')?;
@@ -258,7 +220,6 @@ impl TokenKind {
     /// Compares token types (not actual values).
     pub fn has_type_like(&self, other: &TokenKind) -> bool {
         match (self, other) {
-            (Fn(v0), Fn(v1)) => v0 == v1,
             (Const(v0), Const(v1)) => v0 == v1,
             (Operator(v0), Operator(v1)) => v0 == v1,
             (Kw(v0), Kw(v1)) => v0 == v1,
@@ -321,7 +282,6 @@ lazy_static! {
         m.insert("if", Keyword::If);
         m.insert("loop", Keyword::Loop);
         m.insert("var", Keyword::Var);
-        m.insert("fn", Keyword::Fn);
         m.insert("ret", Keyword::Ret);
         m.insert("print", Keyword::Print);
         m.insert("true", Keyword::True);
@@ -335,7 +295,6 @@ pub enum Keyword {
     If,
     Loop,
     Var,
-    Fn,
     Ret,
     Print,
     True,
@@ -348,7 +307,6 @@ impl Display for Keyword {
             Self::If => f.write_str("if"),
             Self::Loop => f.write_str("loop"),
             Self::Var => f.write_str("var"),
-            Self::Fn => f.write_str("fn"),
             Self::Ret => f.write_str("ret"),
             Self::Print => f.write_str("print"),
             Self::True => f.write_str("true"),
