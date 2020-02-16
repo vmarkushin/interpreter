@@ -1,13 +1,12 @@
 #![feature(box_syntax)]
 
-pub mod cursor;
+//pub mod cursor;
 pub mod interpreter;
 pub mod syntax;
 pub mod tokenizer;
 
 use crate::interpreter::Interpreter;
 use crate::syntax::{parse, display_arr};
-use log::debug;
 use log::LevelFilter;
 use std::collections::HashMap;
 use tokenizer::Literal;
@@ -23,8 +22,11 @@ fn main() {
         VARS = Some(HashMap::new());
     }
 
-    let expr = "print 1 - (2 * 3) < 4 != false;";
-    let mut stmts = parse(&expr);
+    let expr = r#"
+        print true;
+        print 2 +  1;
+    "#;
+    let stmts = parse(&expr);
     let mut interpreter = Interpreter::new();
     display_arr(&stmts);
     interpreter.interpret(stmts).unwrap();

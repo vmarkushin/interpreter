@@ -157,15 +157,20 @@ impl Interpreter {
         }
     }
 
+    pub fn execute(&mut self, stmt: Stmt) -> Result<()> {
+        match stmt {
+            Stmt::Expr(e) => { self.eval(e)?; },
+            Stmt::Print(e) => {
+                let val = self.eval(e)?;
+                println!("{}", val);
+            },
+        };
+        Ok(())
+    }
+
     pub fn interpret(&mut self, stmts: Vec<Stmt>) -> Result<()> {
         for stmt in stmts {
-            match stmt {
-                Stmt::Expr(e) => { self.eval(e); },
-                Stmt::Print(e) => {
-                    let val = self.eval(e)?;
-                    println!("{}", val);
-                },
-            };
+            self.execute(stmt)?;
         }
         Ok(())
     }

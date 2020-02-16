@@ -1,11 +1,6 @@
-use crate::tokenizer::{
-    tokenize, Keyword, Literal,
-    Operator::{self, *},
-    Token,
-    Token::*,
-};
-use log::debug;
-use std::fmt::{self, Display, Formatter, Write, Pointer};
+use crate::tokenizer::{Keyword, Literal, Operator::{self, *}, TokenKind, TokenKind::*, Tokenizer, Token};
+use log::{trace};
+use std::fmt::{self, Display, Formatter, Write};
 use std::iter::Peekable;
 use std::result;
 
@@ -36,7 +31,12 @@ impl Stmt {
 impl Display for Stmt {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Stmt::Expr(e) | Stmt::Print(e) => e.fmt(f),
+            Stmt::Expr(e) => e.fmt(f),
+            Stmt::Print(e) => {
+                f.write_str("(print ")?;
+                e.fmt(f)?;
+                f.write_str(")")
+            },
         }
     }
 }
@@ -80,7 +80,7 @@ impl DbgObj {
         };
         let padding: String = std::iter::repeat(' ').take(pad).collect();
         let s = format!("{}{}", padding, d);
-        debug!("-> {}", s);
+        trace!("-> {}", s);
         DbgObj { text: s }
     }
 }
@@ -90,7 +90,7 @@ impl Drop for DbgObj {
         unsafe {
             DBG_OBJ_PAD -= 2;
         }
-        debug!("<- {}", self.text);
+        trace!("<- {}", self.text);
     }
 }
 
@@ -131,20 +131,32 @@ impl<'a> Parser<'a> {
         self.curr = self.it.next();
     }
 
-    pub fn consume(&mut self, t0: Token, err: &str) {
-        match &self.curr {
-            Some(t) if t.kind_like(&t0) => {
+    pub fn curr_kind(&self) -> Option<TokenKind> {
+        self.curr.as_ref().map(|x| x.kind.clone())
+    }
+
+    pub fn prev_kind(&self) -> Option<TokenKind> {
+        self.prev.as_ref().map(|x| x.kind.clone())
+    }
+
+    pub fn peek_kind(&mut self) -> Option<&TokenKind> {
+        self.it.peek().map(|x| &x.kind)
+    }
+
+    pub fn consume(&mut self, t0: TokenKind, err: &str) {
+        match &self.curr_kind() {
+            Some(t) if t.has_type_like(&t0) => {
                 self.advance();
             }
             _ => panic!("{}", err),
         }
     }
 
-    pub fn matches_any(&mut self, ts: &[Token]) -> bool {
-        match &self.curr {
+    pub fn matches_any(&mut self, ts: &[TokenKind]) -> bool {
+        match &self.curr_kind() {
             Some(t) => {
                 for ti in ts {
-                    if t.kind_like(ti) {
+                    if t.has_type_like(ti) {
                         self.advance();
                         return true;
                     }
@@ -155,11 +167,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn matches_1(&mut self, t0: Token) -> bool {
+    pub fn matches_1(&mut self, t0: TokenKind) -> bool {
         self.matches_any(&[t0])
     }
 
-    pub fn matches_2(&mut self, t0: Token, t1: Token) -> bool {
+    pub fn matches_2(&mut self, t0: TokenKind, t1: TokenKind) -> bool {
         self.matches_any(&[t0, t1])
     }
 
@@ -179,7 +191,7 @@ impl<'a> Parser<'a> {
         }
 
         #[allow(clippy::single_match)]
-        match self.curr.clone() {
+        match self.curr_kind() {
             Some(Lit(lit)) => {
                 self.advance();
                 return Ok(box Expr::Literal { lit });
@@ -199,10 +211,10 @@ impl<'a> Parser<'a> {
     pub fn unary(&mut self) -> Box<Expr> {
         let _dobj = DbgObj::new("UNARY");
 
-        if let Some(t) = &self.curr {
+        if let Some(t) = &self.curr_kind() {
             #[allow(clippy::single_match)]
             match *t {
-                Token::Operator(op) => match op {
+                TokenKind::Operator(op) => match op {
                     Sub => (),
                     _ => panic!("Expected expression, found operator: {:?}", op),
                 },
@@ -212,8 +224,7 @@ impl<'a> Parser<'a> {
 
         if self.matches_2(Operator(Not), Operator(Sub)) {
             let op = self
-                .prev
-                .clone()
+                .prev_kind()
                 .unwrap()
                 .as_operator()
                 .expect("expected operator");
@@ -230,8 +241,7 @@ impl<'a> Parser<'a> {
         let mut expr = self.unary();
         while self.matches_2(Operator(Mul), Operator(Div)) {
             let op = self
-                .prev
-                .clone()
+                .prev_kind()
                 .expect("expected token")
                 .clone()
                 .as_operator()
@@ -252,8 +262,7 @@ impl<'a> Parser<'a> {
         let mut expr = self.mul_div();
         while self.matches_2(Operator(Sub), Operator(Add)) {
             let op = self
-                .prev
-                .clone()
+                .prev_kind()
                 .expect("expected token")
                 .clone()
                 .as_operator()
@@ -274,8 +283,7 @@ impl<'a> Parser<'a> {
         let mut expr = self.add_sub();
         while self.matches_any(&[Operator(Lt), Operator(Gt), Operator(LtEq), Operator(GtEq)]) {
             let op = self
-                .prev
-                .clone()
+                .prev_kind()
                 .expect("expected token")
                 .clone()
                 .as_operator()
@@ -297,8 +305,7 @@ impl<'a> Parser<'a> {
 
         while self.matches_2(Operator(BangEq), Operator(EqEq)) {
             let op = self
-                .prev
-                .clone()
+                .prev_kind()
                 .expect("expected token")
                 .clone()
                 .as_operator()
@@ -362,13 +369,13 @@ impl<'a> Parser<'a> {
         self.advance();
 
         while self.it.peek().is_some() {
-            if let Some(t) = &self.prev {
-                if t.kind_like(&Semicol) {
+            if let Some(t) = &self.prev_kind() {
+                if t.has_type_like(&Semicol) {
                     return;
                 }
             }
 
-            if let Some(t) = self.it.peek() {
+            if let Some(t) = self.peek_kind() {
                 match t {
                     Kw(Keyword::Var) | Kw(Keyword::If) | Kw(Keyword::Fn) | Kw(Keyword::Loop)
                     | Kw(Keyword::Ret) | Kw(Keyword::Print) => return,
@@ -406,7 +413,8 @@ impl Display for Expr {
 }
 
 pub fn parse(program: &str) -> Vec<Stmt> {
-    let it = box tokenize(program);
+    let tokenizer = Tokenizer::new(program);
+    let it = box tokenizer;
     let mut parser = Parser::new(it);
     parser.program()
 }
