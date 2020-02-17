@@ -532,12 +532,7 @@ impl<'a> Iterator for Tokenizer<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut token = self.next_token();
-        let mut i = 0;
         while token.is_none() && !self.is_eof() {
-            i += 1;
-            if i > 10 {
-                break;
-            }
             token = self.next_token();
         }
         token

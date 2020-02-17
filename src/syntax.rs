@@ -9,11 +9,23 @@ use log::trace;
 use std::fmt::{self, Display, Formatter, Write};
 use std::iter::Peekable;
 use std::result;
+use log::debug;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Error)]
+#[error(display = "Interpreter error.")]
 pub enum Error {
-    ExpectedExpression,
-    UnsopportedOperation,
+    #[error(display = "expected expression, found `{}`", _0)]
+    ExpectedExpression(String),
+    #[error(display = "unexpected operation `{}`", _0)]
+    UnsopportedOperation(String),
+    #[error(display = "expected `)`")]
+    ExpectedClosedParen,
+    #[error(display = "expected `{{`")]
+    ExpectedOpenBrace,
+    #[error(display = "expected `}}`")]
+    ExpectedClosedBrace,
+    #[error(display = "expected `;` after expression")]
+    ExpectedSemicol,
 }
 
 pub type Result<R> = result::Result<R, Error>;
@@ -49,7 +61,7 @@ impl Display for Stmt {
 
 pub fn display_arr<T: Display>(arr: &[T]) {
     for s in arr {
-        println!("{}", s);
+        debug!("{}", s);
     }
 }
 
@@ -133,12 +145,13 @@ impl<'a> Parser<'a> {
         self.it.peek().map(|x| &x.kind)
     }
 
-    pub fn consume(&mut self, t0: TokenKind, err: &str) {
+    pub fn consume(&mut self, t0: TokenKind, err: Error) -> Result<()> {
         match &self.curr_kind() {
             Some(t) if t.has_type_like(&t0) => {
                 self.advance();
+                Ok(())
             }
-            _ => panic!("{}", err),
+            _ => Err(err),
         }
     }
 
@@ -190,15 +203,15 @@ impl<'a> Parser<'a> {
         }
 
         if self.matches_1(OpenParen) {
-            let expr = self.expr();
-            self.consume(ClosedParen, "Expected ')'");
+            let expr = self.expr()?;
+            self.consume(ClosedParen, Error::ExpectedClosedParen)?;
             Ok(box Expr::Grouping { expr })
         } else {
-            Err(Error::ExpectedExpression)
+            Err(Error::ExpectedExpression(format!("{:?}", self.peek_kind())))
         }
     }
 
-    pub fn unary(&mut self) -> Box<Expr> {
+    pub fn unary(&mut self) -> Result<Box<Expr>> {
         let _dobj = DbgObj::new("UNARY");
 
         if let Some(t) = &self.curr_kind() {
@@ -206,7 +219,7 @@ impl<'a> Parser<'a> {
             match *t {
                 TokenKind::Operator(op) => match op {
                     Sub => (),
-                    _ => panic!("Expected expression, found operator: {:?}", op),
+                    _ => return Err(Error::ExpectedExpression(format!("{}", op))),
                 },
                 _ => (),
             }
@@ -218,17 +231,17 @@ impl<'a> Parser<'a> {
                 .unwrap()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.unary();
-            box Expr::Unary { op, right }
+            let right = self.unary()?;
+            Ok(box Expr::Unary { op, right })
         } else {
-            self.primary().unwrap()
+            self.primary()
         }
     }
 
-    pub fn mul_div(&mut self) -> Box<Expr> {
+    pub fn mul_div(&mut self) -> Result<Box<Expr>> {
         let _dobj = DbgObj::new("MUL");
 
-        let mut expr = self.unary();
+        let mut expr = self.unary()?;
         while self.matches_2(Operator(Mul), Operator(Div)) {
             let op = self
                 .prev_kind()
@@ -236,20 +249,20 @@ impl<'a> Parser<'a> {
                 .clone()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.unary();
+            let right = self.unary()?;
             expr = box Expr::Binary {
                 left: expr,
                 op,
                 right,
             };
         }
-        expr
+        Ok(expr)
     }
 
-    pub fn add_sub(&mut self) -> Box<Expr> {
+    pub fn add_sub(&mut self) -> Result<Box<Expr>> {
         let _dobj = DbgObj::new("ADD");
 
-        let mut expr = self.mul_div();
+        let mut expr = self.mul_div()?;
         while self.matches_2(Operator(Sub), Operator(Add)) {
             let op = self
                 .prev_kind()
@@ -257,20 +270,20 @@ impl<'a> Parser<'a> {
                 .clone()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.mul_div();
+            let right = self.mul_div()?;
             expr = box Expr::Binary {
                 left: expr,
                 op,
                 right,
             };
         }
-        expr
+        Ok(expr)
     }
 
-    pub fn comp(&mut self) -> Box<Expr> {
+    pub fn comp(&mut self) -> Result<Box<Expr>> {
         let _dobj = DbgObj::new("COMP");
 
-        let mut expr = self.add_sub();
+        let mut expr = self.add_sub()?;
         while self.matches_any(&[Operator(Lt), Operator(Gt), Operator(LtEq), Operator(GtEq)]) {
             let op = self
                 .prev_kind()
@@ -278,20 +291,20 @@ impl<'a> Parser<'a> {
                 .clone()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.add_sub();
+            let right = self.add_sub()?;
             expr = box Expr::Binary {
                 left: expr,
                 op,
                 right,
             };
         }
-        expr
+        Ok(expr)
     }
 
-    pub fn eq(&mut self) -> Box<Expr> {
+    pub fn eq(&mut self) -> Result<Box<Expr>> {
         let _dobj = DbgObj::new("EQ");
 
-        let mut expr = self.comp();
+        let mut expr = self.comp()?;
 
         while self.matches_2(Operator(BangEq), Operator(EqEq)) {
             let op = self
@@ -300,45 +313,45 @@ impl<'a> Parser<'a> {
                 .clone()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.comp();
+            let right = self.comp()?;
             expr = box Expr::Binary {
                 left: expr,
                 op,
                 right,
             };
         }
-        expr
+        Ok(expr)
     }
 
-    pub fn block_expr(&mut self) -> Box<Expr> {
+    pub fn block_expr(&mut self) -> Result<Box<Expr>> {
         let _dobj = DbgObj::new("BLOCK EXPR");
-        self.consume(OpenBracket, "Expected '{'");
-        let expr = self.expr();
-        self.consume(ClosedBracket, "Expected '}'");
-        expr
+        self.consume(OpenBracket, Error::ExpectedOpenBrace)?;
+        let expr = self.expr()?;
+        self.consume(ClosedBracket, Error::ExpectedClosedBrace)?;
+        Ok(expr)
     }
 
-    pub fn expr_without_block(&mut self) -> Box<Expr> {
+    pub fn expr_without_block(&mut self) -> Result<Box<Expr>> {
         self.eq()
     }
 
-    pub fn expr_statement(&mut self) -> Stmt {
-        let expr = *self.expr();
-        self.consume(Semicol, "expected ';' after expression");
-        Stmt::Expr(expr)
+    pub fn expr_statement(&mut self) -> Result<Stmt> {
+        let expr = *self.expr()?;
+        self.consume(Semicol, Error::ExpectedSemicol)?;
+        Ok(Stmt::Expr(expr))
     }
 
-    pub fn expr(&mut self) -> Box<Expr> {
+    pub fn expr(&mut self) -> Result<Box<Expr>> {
         self.eq()
     }
 
-    pub fn print(&mut self) -> Stmt {
-        let expr = self.expr();
-        self.consume(Semicol, "expected ';' after expression");
-        Stmt::Print(*expr)
+    pub fn print(&mut self) -> Result<Stmt> {
+        let expr = self.expr()?;
+        self.consume(Semicol, Error::ExpectedSemicol)?;
+        Ok(Stmt::Print(*expr))
     }
 
-    pub fn stmt(&mut self) -> Stmt {
+    pub fn stmt(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("STMT");
         if self.matches_1(Kw(Keyword::Print)) {
             self.print()
@@ -347,12 +360,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn program(&mut self) -> Vec<Stmt> {
+    pub fn program(&mut self) -> Result<Vec<Stmt>> {
         let mut v = vec![];
         while self.curr.is_some() {
-            v.push(self.stmt());
+            v.push(self.stmt()?);
         }
-        v
+        Ok(v)
     }
 
     pub fn synchronize(&mut self) {
@@ -402,7 +415,7 @@ impl Display for Expr {
     }
 }
 
-pub fn parse(program: &str) -> Vec<Stmt> {
+pub fn parse(program: &str) -> Result<Vec<Stmt>> {
     let tokenizer = Tokenizer::new(program);
     let it = box tokenizer;
     let mut parser = Parser::new(it);

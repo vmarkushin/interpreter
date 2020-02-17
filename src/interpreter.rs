@@ -142,7 +142,7 @@ impl Interpreter {
                     Operator::Or => l.or(r),
                     Operator::Not => panic!("Unexpected operator `!` in binary operator"),
                 }
-                .ok_or(Error::UnsopportedOperation)
+                .ok_or_else(|| Error::UnsopportedOperation(format!("{}", op)))
             }
             Expr::Grouping { expr } => self.eval(*expr),
             Expr::Unary { op, right } => {
@@ -152,7 +152,7 @@ impl Interpreter {
                     Operator::Not => !r,
                     _ => None,
                 }
-                .ok_or(Error::UnsopportedOperation)
+                .ok_or_else(|| Error::UnsopportedOperation(format!("{}", op)))
             }
         }
     }
