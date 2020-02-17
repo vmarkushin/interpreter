@@ -1,5 +1,8 @@
 #![feature(box_syntax)]
 
+#[macro_use]
+extern crate err_derive;
+
 pub mod interpreter;
 pub mod syntax;
 pub mod tokenizer;
@@ -20,26 +23,25 @@ fn main() {
 
     let mut interpreter = Interpreter::new();
 
-    let expr = r#"
+    let mut line = r#"
         print "hello";
         print true;
         print 2 + 1;
-    "#;
-    let stmts = parse(&expr);
-    display_arr(&stmts);
-    if let Err(e) = interpreter.interpret(stmts) {
-        error!("Error: {:?}", e);
-    }
+    "#.to_owned();
 
     // REPL mode
     let stdin = std::io::stdin();
-    let mut line = String::new();
     loop {
-        stdin.read_line(&mut line).unwrap();
-        let stmts = parse(&line);
-        display_arr(&stmts);
-        if let Err(e) = interpreter.interpret(stmts) {
-            error!("Error: {:?}", e);
+        if line.is_empty() {
+            stdin.read_line(&mut line).unwrap();
+        } else {
+            if let Some(e) = parse(&line).and_then(|stmts| {
+                display_arr(&stmts);
+                interpreter.interpret(stmts)
+            }).err() {
+                error!("Error: {:?}", e);
+            }
+            line.clear();
         }
     }
 }
