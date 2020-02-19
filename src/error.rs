@@ -1,6 +1,6 @@
-use crate::tokenizer::Error as TokenizerError;
-use crate::syntax::Error as SyntaxError;
 use crate::interpreter::Error as RuntimeError;
+use crate::syntax::Error as SyntaxError;
+use crate::tokenizer::Error as TokenizerError;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum Error {
@@ -15,6 +15,12 @@ pub enum Error {
 impl From<TokenizerError> for Error {
     fn from(e: TokenizerError) -> Self {
         Self::TokenizerError(e)
+    }
+}
+
+impl From<TokenizerError> for SyntaxError {
+    fn from(e: TokenizerError) -> Self {
+        Self::TokenError(e)
     }
 }
 

@@ -1,10 +1,16 @@
-use crate::tokenizer::{Keyword, Literal, Operator::{self, *}, Token, TokenKind, TokenKind::*, Tokenizer, TokenMeta};
+use crate::tokenizer::{
+    Error as TokError, Keyword, Literal,
+    Operator::{self, *},
+    Result as TokResult, Token, TokenKind,
+    TokenKind::*,
+    TokenMeta, Tokenizer,
+};
 use log::trace;
+use log::{debug, error};
 use std::fmt::{self, Display, Formatter, Write};
 use std::iter::Peekable;
-use std::result;
-use log::{error, debug};
 use std::option::NoneError;
+use std::result;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(display = "Syntax error.")]
@@ -23,6 +29,8 @@ pub enum Error {
     ExpectedIdent,
     #[error(display = "invalid assignment")]
     InvalidAssignment,
+    #[error(display = "{}", _0)]
+    TokenError(TokError),
     #[error(display = "parse error")]
     ParseError,
 }
@@ -68,10 +76,7 @@ impl Display for Stmt {
                 e.fmt(f)?;
                 f.write_str(")")
             }
-            Stmt::VarDecl {
-                name,
-                initializer
-            } => {
+            Stmt::VarDecl { name, initializer } => {
                 f.write_str("(var ")?;
                 f.write_str(&name.lexeme)?;
                 if let Some(init) = initializer {
@@ -125,6 +130,9 @@ struct DbgObj {
 
 impl DbgObj {
     pub fn new(d: impl Display) -> Self {
+        #[cfg(test)]
+        let pad = 0;
+        #[cfg(not(test))]
         let pad = unsafe {
             DBG_OBJ_PAD += 2;
             DBG_OBJ_PAD
@@ -138,6 +146,7 @@ impl DbgObj {
 
 impl Drop for DbgObj {
     fn drop(&mut self) {
+        #[cfg(not(test))]
         unsafe {
             DBG_OBJ_PAD -= 2;
         }
@@ -146,28 +155,41 @@ impl Drop for DbgObj {
 }
 
 pub struct Parser<'a> {
-    it: Peekable<Box<dyn Iterator<Item = Token> + 'a>>,
+    it: Peekable<Box<dyn Iterator<Item = TokResult<Token>> + 'a>>,
     prev: Option<Token>,
     curr: Option<Token>,
-    had_error: bool,
     errors: Vec<Error>,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(mut it: Box<dyn Iterator<Item = Token> + 'a>) -> Self {
-        let first = it.next();
-        Parser {
+    pub fn new(it: Box<dyn Iterator<Item = TokResult<Token>> + 'a>) -> Self {
+        let mut parser = Parser {
             it: it.peekable(),
             prev: None,
-            curr: first,
-            had_error: false,
+            curr: None,
             errors: Vec::new(),
-        }
+        };
+
+        parser.advance();
+        parser
+    }
+
+    pub fn had_error(&self) -> bool {
+        !self.errors.is_empty()
     }
 
     pub fn advance(&mut self) {
         self.prev = self.curr.take();
-        self.curr = self.it.next();
+        loop {
+            let next = self.it.next().transpose();
+            match next {
+                Err(e) => self.errors.push(e.into()),
+                Ok(opt) => {
+                    self.curr = opt;
+                    break;
+                }
+            }
+        }
     }
 
     pub fn curr_kind(&self) -> Option<TokenKind> {
@@ -182,8 +204,12 @@ impl<'a> Parser<'a> {
         self.prev.as_ref().map(|x| x.kind.clone())
     }
 
-    pub fn peek_kind(&mut self) -> Option<&TokenKind> {
-        self.it.peek().map(|x| &x.kind)
+    pub fn peek_kind(&mut self) -> Result<Option<&TokenKind>> {
+        match self.it.peek() {
+            Some(Ok(x)) => Ok(Some(&x.kind)),
+            Some(Err(e)) => Err(e.clone().into()),
+            None => Ok(None),
+        }
     }
 
     pub fn consume(&mut self, t0: TokenKind, err: Error) -> Result<Token> {
@@ -254,12 +280,11 @@ impl<'a> Parser<'a> {
             self.consume(ClosedParen, Error::ExpectedClosedParen)?;
             Ok(box Expr::Grouping { expr })
         } else {
-            match self.peek_kind() {
+            match self.peek_kind()? {
                 Some(kind) => Err(Error::ExpectedExpression(format!("{}", kind))),
                 None => Err(Error::ExpectedExpression("'nothing'".into())),
             }
         }
-
     }
 
     pub fn unary(&mut self) -> Result<Box<Expr>> {
@@ -393,10 +418,7 @@ impl<'a> Parser<'a> {
             let value = *self.expr()?;
             if let Stmt::Expr(expr) = expr_stmt {
                 if let Expr::Var(name) = expr {
-                    return Ok(Stmt::VarAssign {
-                        name,
-                        value
-                    })
+                    return Ok(Stmt::VarAssign { name, value });
                 }
             }
 
@@ -425,12 +447,19 @@ impl<'a> Parser<'a> {
         let _dobj = DbgObj::new("VAR DECL");
 
         let ident_token = self.consume(TokenKind::Ident("".to_string()), Error::ExpectedIdent)?;
-        let initializer = self.matches_1(Operator(Operator::Eq)).then(|| self.expr()).transpose()?.map(|x| *x);
+        let initializer = self
+            .matches_1(Operator(Operator::Eq))
+            .then(|| self.expr())
+            .transpose()?
+            .map(|x| *x);
         let stmt = Stmt::VarDecl {
             name: ident_token.meta,
             initializer,
         };
-        self.consume(Semicol, Error::ExpectedSemicol("variable declaration".into()))?;
+        self.consume(
+            Semicol,
+            Error::ExpectedSemicol("variable declaration".into()),
+        )?;
         Ok(stmt)
     }
 
@@ -469,11 +498,10 @@ impl<'a> Parser<'a> {
             match self.decl() {
                 Ok(decl) => v.push(decl),
                 Err(e) => {
-                    self.had_error = true;
                     error!("{}", e);
                     self.errors.push(e);
                     self.synchronize();
-                },
+                }
             }
         }
         v
@@ -489,12 +517,17 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if let Some(t) = self.peek_kind() {
-                match t {
-                    Kw(Keyword::Var) | Kw(Keyword::If) | Kw(Keyword::Loop) | Kw(Keyword::Ret)
-                    | Kw(Keyword::Print) => return,
-                    _ => (),
+            match self.peek_kind() {
+                Ok(opt) => {
+                    if let Some(t) = opt {
+                        match t {
+                            Kw(Keyword::Var) | Kw(Keyword::If) | Kw(Keyword::Loop)
+                            | Kw(Keyword::Ret) | Kw(Keyword::Print) => return,
+                            _ => (),
+                        }
+                    }
                 }
+                Err(_) => continue,
             }
 
             self.advance();
@@ -521,7 +554,7 @@ impl Display for Expr {
             Expr::Grouping { expr } => parenthesize("group", &[expr])?,
             Expr::Literal { lit } => format!("{}", lit),
             Expr::Unary { op, right } => parenthesize(&format!("{}", op), &[right])?,
-            Expr::Var(var) => format!("{}", var.lexeme),
+            Expr::Var(var) => var.lexeme.clone(),
         };
         f.write_str(&s)
     }
@@ -532,7 +565,7 @@ pub fn parse(program: &str) -> Result<Vec<Stmt>> {
     let it = box tokenizer;
     let mut parser = Parser::new(it);
     let vec = parser.program();
-    if parser.had_error {
+    if parser.had_error() {
         Err(parser.errors.first().cloned().unwrap())
     } else {
         Ok(vec)
@@ -540,42 +573,48 @@ pub fn parse(program: &str) -> Result<Vec<Stmt>> {
 }
 
 mod tests {
+    use super::{Error, Parser};
     use crate::tokenizer::tokenize;
-    use super::{Parser, Error};
 
     #[test]
     fn test_parser() {
         let mut parser = Parser::new(box tokenize("1;"));
         let _ = parser.program();
-        assert!(!parser.had_error);
+        assert!(!parser.had_error());
 
         let mut parser = Parser::new(box tokenize("1"));
         let _ = parser.program();
-        assert_eq!(parser.errors.first().unwrap(), &Error::ExpectedSemicol("expression".into()));
+        assert_eq!(
+            parser.errors.first().unwrap(),
+            &Error::ExpectedSemicol("expression".into())
+        );
 
         let mut parser = Parser::new(box tokenize("1 + 2;"));
         let _ = parser.program();
-        assert!(!parser.had_error);
+        assert!(!parser.had_error());
 
         let mut parser = Parser::new(box tokenize("1 + true;"));
         let _ = parser.program();
-        assert!(!parser.had_error);
+        assert!(!parser.had_error());
 
         let mut parser = Parser::new(box tokenize("1 + var;"));
         let _ = parser.program();
-        assert_eq!(parser.errors.first().unwrap(), &Error::ExpectedExpression(";".into()));
+        assert_eq!(
+            parser.errors.first().unwrap(),
+            &Error::ExpectedExpression(";".into())
+        );
 
         let mut parser = Parser::new(box tokenize("var a = 1 + 2;"));
         let _ = parser.program();
-        assert!(!parser.had_error);
+        assert!(!parser.had_error());
 
         let mut parser = Parser::new(box tokenize("var a = 1 < 2;"));
         let _ = parser.program();
-        assert!(!parser.had_error);
+        assert!(!parser.had_error());
 
         let mut parser = Parser::new(box tokenize("var a = null;"));
         let _ = parser.program();
-        assert!(!parser.had_error);
+        assert!(!parser.had_error());
 
         let mut parser = Parser::new(box tokenize("var if = a;"));
         let _ = parser.program();

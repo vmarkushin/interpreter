@@ -1,19 +1,21 @@
 use self::TokenKind::*;
 use lazy_static::lazy_static;
 use log::debug;
+use log::error;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter, Write};
 use std::iter::Peekable;
-use std::str::{Chars};
 use std::result;
-use log::error;
+use std::str::Chars;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(display = "Tokenizer error.")]
 pub enum Error {
     #[error(display = "unexpected new line in string")]
     UnexpectedNewLineInStr,
+    #[error(display = "unterminated string")]
+    UnterminatedStr,
     #[error(display = "unexpected new line in string")]
     InvalidFloat,
 }
@@ -101,7 +103,7 @@ pub struct TokenMeta {
     pub column: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub(crate) kind: TokenKind,
     pub(crate) meta: TokenMeta,
@@ -141,13 +143,6 @@ impl Display for TokenKind {
 }
 
 impl TokenKind {
-    pub fn into_lit(self) -> Literal {
-        match self {
-            TokenKind::Lit(lit) => lit,
-            _ => panic!("Expected literal"),
-        }
-    }
-
     /// Compares token types (not actual values).
     pub fn has_type_like(&self, other: &TokenKind) -> bool {
         match (self, other) {
@@ -439,24 +434,32 @@ impl<'a> Tokenizer<'a> {
     fn number(&mut self) -> Result<Literal> {
         self.eat_while(|x| x.is_digit(10));
         let string = self.curr_lexeme();
-        Ok(Literal::Num(string.parse().map_err(|_| Error::InvalidFloat)?))
+        Ok(Literal::Num(
+            string.parse().map_err(|_| Error::InvalidFloat)?,
+        ))
     }
 
     fn string(&mut self) -> Result<TokenKind> {
-        let start_line = self.line;
+        // TODO: show more info in errors
+        let _start_line = self.line;
         let mut terminated = false;
 
+        let mut err = None;
         while let Some(c) = self.next_char() {
             if c == '\n' {
-                return Err(Error::UnexpectedNewLineInStr);
+                err = Some(Error::UnexpectedNewLineInStr);
             } else if c == '"' {
                 terminated = true;
                 break;
             }
         }
 
+        if let Some(e) = err {
+            return Err(e);
+        }
+
         if !terminated {
-            panic!("Unterminated string at {}", start_line);
+            return Err(Error::UnterminatedStr);
         }
 
         let string = self
@@ -478,11 +481,11 @@ impl<'a> Iterator for Tokenizer<'a> {
             token = self.next_token();
         }
         token.and_then(|result| match result {
-            Ok(token) => Some(token),
+            Ok(token) => Some(Ok(token)),
             Err(e) => {
                 error!("{}", e);
-                None
-            },
+                Some(Err(e))
+            }
         })
     }
 }
@@ -530,43 +533,77 @@ fn expr_formatting_test() -> fmt::Result {
 
 #[test]
 fn test_tokenizer_kinds() -> fmt::Result {
-    let ts: Vec<_> = tokenize("print").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("print")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Kw(Keyword::Print)][..]);
 
-    let ts: Vec<_> = tokenize("=").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("=")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Operator(Operator::Eq)][..]);
 
-    let ts: Vec<_> = tokenize("$").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("$")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Unknown][..]);
 
-    let ts: Vec<_> = tokenize("==").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("==")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Operator(Operator::EqEq)][..]);
 
-    let ts: Vec<_> = tokenize("!=").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("!=")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Operator(Operator::BangEq)][..]);
 
-    let ts: Vec<_> = tokenize("1").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("1")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Lit(Literal::Num(1.0))][..]);
 
-    let ts: Vec<_> = tokenize(r#""hello""#).map(Token::into_kind).collect();
-    assert_eq!(ts.as_slice(), &[TokenKind::Lit(Literal::Str("hello".into()))][..]);
+    let ts: Vec<_> = tokenize(r#""hello""#)
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
+    assert_eq!(
+        ts.as_slice(),
+        &[TokenKind::Lit(Literal::Str("hello".into()))][..]
+    );
 
-    let ts: Vec<_> = tokenize("\"he\nllo\"").map(Token::into_kind).collect();
-    assert_eq!(ts.as_slice(), &[TokenKind::Lit(Literal::Str("hello".into()))][..]);
+    let mut ts: Vec<_> = tokenize("\"he\nllo\"").map(Result::unwrap_err).collect();
+    assert_eq!(ts.as_slice(), &[Error::UnexpectedNewLineInStr][..]);
 
-    let ts: Vec<_> = tokenize("true false").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("true false")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
     assert_eq!(
         ts.as_slice(),
         &[TokenKind::Kw(Keyword::True), TokenKind::Kw(Keyword::False)][..]
     );
 
-    let ts: Vec<_> = tokenize("ident").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("ident")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Ident("ident".to_string())][..]);
 
-    let ts: Vec<_> = tokenize("truee").map(Token::into_kind).collect();
+    let ts: Vec<_> = tokenize("truee")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Ident("truee".to_string())][..]);
 
     let ts: Vec<_> = tokenize("if a == true { b = 3 * -2; }")
+        .map(Result::unwrap)
         .map(Token::into_kind)
         .collect();
     let _x = ts.first().unwrap();

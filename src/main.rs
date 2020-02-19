@@ -10,9 +10,9 @@ pub mod tokenizer;
 
 use crate::interpreter::Interpreter;
 use crate::syntax::{display_arr, parse};
+use error::Error;
 use log::error;
 use log::LevelFilter;
-use error::Error;
 
 fn main() {
     env_logger::Builder::new()
@@ -22,9 +22,10 @@ fn main() {
     let mut interpreter = Interpreter::new();
     let mut line = r#"
         var a = 1336;
-        var b = 3;
-        print c;
-    "#.to_owned();
+        var b = 1;
+        print b + a;
+    "#
+    .to_owned();
 
     // REPL mode
     let stdin = std::io::stdin();

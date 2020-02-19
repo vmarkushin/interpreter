@@ -1,19 +1,19 @@
-use crate::syntax::{Expr};
-use crate::syntax::{Stmt};
+use self::Value::*;
+use crate::syntax::Expr;
+use crate::syntax::Stmt;
 use crate::tokenizer::Literal;
 use crate::tokenizer::Operator::{self};
 use std::cmp::Ordering::{self, *};
 use std::collections::HashMap;
-use std::ops::*;
-use self::Value::*;
 use std::fmt::{self, Display};
+use std::ops::*;
 use std::result;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(display = "Runtime error.")]
 pub enum Error {
-    #[error(display = "unexpected operation `{}`", _0)]
-    UnsopportedOperation(String),
+    #[error(display = "unsupported operation `{}`", _0)]
+    UnsupportedOperation(String),
     #[error(display = "undefined variable `{}`", _0)]
     UndefinedVar(String),
     #[error(display = "variable `{}` is null", _0)]
@@ -171,7 +171,7 @@ impl Env {
 
     pub fn assign(&mut self, name: String, val: Value) -> Result<()> {
         if !self.vars.contains_key(&name) {
-            return Err(Error::UndefinedVar(name.into()));
+            return Err(Error::UndefinedVar(name));
         }
         self.vars.insert(name, val);
         Ok(())
@@ -214,7 +214,7 @@ impl Interpreter {
                     Operator::Or => l.or(r),
                     Operator::Not => panic!("Unexpected unary operator `!` in binary operation"),
                 }
-                .ok_or_else(|| Error::UnsopportedOperation(format!("{}", op)))
+                .ok_or_else(|| Error::UnsupportedOperation(format!("{}", op)))
             }
             Expr::Grouping { expr } => self.eval(*expr),
             Expr::Unary { op, right } => {
@@ -224,11 +224,13 @@ impl Interpreter {
                     Operator::Not => !r,
                     _ => None,
                 }
-                .ok_or_else(|| Error::UnsopportedOperation(format!("{}", op)))
+                .ok_or_else(|| Error::UnsupportedOperation(format!("{}", op)))
             }
-            Expr::Var(var) => {
-                self.env.get(&var.lexeme).cloned().ok_or(Error::UndefinedVar(var.lexeme.into()))
-            }
+            Expr::Var(var) => self
+                .env
+                .get(&var.lexeme)
+                .cloned()
+                .ok_or_else(|| Error::UndefinedVar(var.lexeme)),
         }
     }
 
@@ -265,7 +267,7 @@ impl Interpreter {
 }
 
 mod tests {
-    use super::{Interpreter, Value, Error};
+    use super::{Error, Interpreter, Value};
 
     #[test]
     pub fn test_vars() -> Result<(), crate::Error> {
@@ -295,11 +297,17 @@ mod tests {
         let program = "var b = a;";
         let stmts = parse(&program).unwrap();
         interpreter.interpret(stmts)?;
-        assert_eq!(interpreter.env.vars.get("b").unwrap(), interpreter.env.vars.get("a").unwrap());
+        assert_eq!(
+            interpreter.env.vars.get("b").unwrap(),
+            interpreter.env.vars.get("a").unwrap()
+        );
 
         let program = "var b = a = 3;";
         let error = parse(&program).err().unwrap();
-        assert_eq!(error, crate::syntax::Error::ExpectedSemicol("variable declaration".into()));
+        assert_eq!(
+            error,
+            crate::syntax::Error::ExpectedSemicol("variable declaration".into())
+        );
 
         Ok(())
     }
