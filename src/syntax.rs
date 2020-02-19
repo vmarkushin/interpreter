@@ -1,31 +1,36 @@
-use crate::tokenizer::{
-    Keyword, Literal,
-    Operator::{self, *},
-    Token, TokenKind,
-    TokenKind::*,
-    Tokenizer,
-};
+use crate::tokenizer::{Keyword, Literal, Operator::{self, *}, Token, TokenKind, TokenKind::*, Tokenizer, TokenMeta};
 use log::trace;
 use std::fmt::{self, Display, Formatter, Write};
 use std::iter::Peekable;
 use std::result;
-use log::debug;
+use log::{error, debug};
+use std::option::NoneError;
 
-#[derive(Debug, Clone, Error)]
-#[error(display = "Interpreter error.")]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+#[error(display = "Syntax error.")]
 pub enum Error {
     #[error(display = "expected expression, found `{}`", _0)]
     ExpectedExpression(String),
-    #[error(display = "unexpected operation `{}`", _0)]
-    UnsopportedOperation(String),
     #[error(display = "expected `)`")]
     ExpectedClosedParen,
     #[error(display = "expected `{{`")]
     ExpectedOpenBrace,
     #[error(display = "expected `}}`")]
     ExpectedClosedBrace,
-    #[error(display = "expected `;` after expression")]
-    ExpectedSemicol,
+    #[error(display = "expected `;` after {}", _0)]
+    ExpectedSemicol(String),
+    #[error(display = "expected identifier")]
+    ExpectedIdent,
+    #[error(display = "invalid assignment")]
+    InvalidAssignment,
+    #[error(display = "parse error")]
+    ParseError,
+}
+
+impl From<NoneError> for Error {
+    fn from(_: NoneError) -> Self {
+        Error::ParseError
+    }
 }
 
 pub type Result<R> = result::Result<R, Error>;
@@ -34,6 +39,14 @@ pub type Result<R> = result::Result<R, Error>;
 pub enum Stmt {
     Expr(Expr),
     Print(Expr),
+    VarDecl {
+        name: TokenMeta,
+        initializer: Option<Expr>,
+    },
+    VarAssign {
+        name: TokenMeta,
+        value: Expr,
+    },
 }
 
 impl Stmt {
@@ -53,6 +66,25 @@ impl Display for Stmt {
             Stmt::Print(e) => {
                 f.write_str("(print ")?;
                 e.fmt(f)?;
+                f.write_str(")")
+            }
+            Stmt::VarDecl {
+                name,
+                initializer
+            } => {
+                f.write_str("(var ")?;
+                f.write_str(&name.lexeme)?;
+                if let Some(init) = initializer {
+                    f.write_char(' ')?;
+                    init.fmt(f)?;
+                }
+                f.write_str(")")
+            }
+            Stmt::VarAssign { name, value } => {
+                f.write_str("(= ")?;
+                f.write_str(&name.lexeme)?;
+                f.write_char(' ')?;
+                value.fmt(f)?;
                 f.write_str(")")
             }
         }
@@ -82,6 +114,7 @@ pub enum Expr {
         op: Operator,
         right: Box<Expr>,
     },
+    Var(TokenMeta),
 }
 
 static mut DBG_OBJ_PAD: usize = 0;
@@ -116,6 +149,8 @@ pub struct Parser<'a> {
     it: Peekable<Box<dyn Iterator<Item = Token> + 'a>>,
     prev: Option<Token>,
     curr: Option<Token>,
+    had_error: bool,
+    errors: Vec<Error>,
 }
 
 impl<'a> Parser<'a> {
@@ -125,6 +160,8 @@ impl<'a> Parser<'a> {
             it: it.peekable(),
             prev: None,
             curr: first,
+            had_error: false,
+            errors: Vec::new(),
         }
     }
 
@@ -137,6 +174,10 @@ impl<'a> Parser<'a> {
         self.curr.as_ref().map(|x| x.kind.clone())
     }
 
+    pub fn curr_meta(&self) -> Option<TokenMeta> {
+        self.curr.as_ref().map(|x| x.meta.clone())
+    }
+
     pub fn prev_kind(&self) -> Option<TokenKind> {
         self.prev.as_ref().map(|x| x.kind.clone())
     }
@@ -145,11 +186,11 @@ impl<'a> Parser<'a> {
         self.it.peek().map(|x| &x.kind)
     }
 
-    pub fn consume(&mut self, t0: TokenKind, err: Error) -> Result<()> {
-        match &self.curr_kind() {
-            Some(t) if t.has_type_like(&t0) => {
+    pub fn consume(&mut self, t0: TokenKind, err: Error) -> Result<Token> {
+        match self.curr.take() {
+            Some(t) if t.kind.has_type_like(&t0) => {
                 self.advance();
-                Ok(())
+                Ok(t)
             }
             _ => Err(err),
         }
@@ -202,13 +243,23 @@ impl<'a> Parser<'a> {
             _ => {}
         }
 
+        if let Some(Ident(_)) = self.curr_kind() {
+            let var_expr = box Expr::Var(self.curr_meta().unwrap());
+            self.advance();
+            return Ok(var_expr);
+        }
+
         if self.matches_1(OpenParen) {
             let expr = self.expr()?;
             self.consume(ClosedParen, Error::ExpectedClosedParen)?;
             Ok(box Expr::Grouping { expr })
         } else {
-            Err(Error::ExpectedExpression(format!("{:?}", self.peek_kind())))
+            match self.peek_kind() {
+                Some(kind) => Err(Error::ExpectedExpression(format!("{}", kind))),
+                None => Err(Error::ExpectedExpression("'nothing'".into())),
+            }
         }
+
     }
 
     pub fn unary(&mut self) -> Result<Box<Expr>> {
@@ -323,49 +374,109 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    pub fn block_expr(&mut self) -> Result<Box<Expr>> {
-        let _dobj = DbgObj::new("BLOCK EXPR");
-        self.consume(OpenBracket, Error::ExpectedOpenBrace)?;
-        let expr = self.expr()?;
-        self.consume(ClosedBracket, Error::ExpectedClosedBrace)?;
-        Ok(expr)
-    }
-
-    pub fn expr_without_block(&mut self) -> Result<Box<Expr>> {
-        self.eq()
-    }
-
     pub fn expr_statement(&mut self) -> Result<Stmt> {
+        let _dobj = DbgObj::new("EXPR STMT");
         let expr = *self.expr()?;
-        self.consume(Semicol, Error::ExpectedSemicol)?;
         Ok(Stmt::Expr(expr))
     }
 
+    /// Handles assignments statements.
+    ///
+    /// # Examples
+    /// - `a = 1;`
+    pub fn assign_statement(&mut self) -> Result<Stmt> {
+        let _dobj = DbgObj::new("ASSIGN STMT");
+
+        let expr_stmt = self.expr_statement()?;
+
+        if self.matches_1(Operator(Operator::Eq)) {
+            let value = *self.expr()?;
+            if let Stmt::Expr(expr) = expr_stmt {
+                if let Expr::Var(name) = expr {
+                    return Ok(Stmt::VarAssign {
+                        name,
+                        value
+                    })
+                }
+            }
+
+            return Err(Error::InvalidAssignment);
+        }
+
+        Ok(expr_stmt)
+    }
+
     pub fn expr(&mut self) -> Result<Box<Expr>> {
+        let _dobj = DbgObj::new("EXPR");
         self.eq()
     }
 
     pub fn print(&mut self) -> Result<Stmt> {
+        let _dobj = DbgObj::new("PRINT");
         let expr = self.expr()?;
-        self.consume(Semicol, Error::ExpectedSemicol)?;
         Ok(Stmt::Print(*expr))
     }
 
+    // Handles variable declarations.
+    ///
+    /// # Examples
+    /// - `var a = 1;`
+    pub fn var_decl(&mut self) -> Result<Stmt> {
+        let _dobj = DbgObj::new("VAR DECL");
+
+        let ident_token = self.consume(TokenKind::Ident("".to_string()), Error::ExpectedIdent)?;
+        let initializer = self.matches_1(Operator(Operator::Eq)).then(|| self.expr()).transpose()?.map(|x| *x);
+        let stmt = Stmt::VarDecl {
+            name: ident_token.meta,
+            initializer,
+        };
+        self.consume(Semicol, Error::ExpectedSemicol("variable declaration".into()))?;
+        Ok(stmt)
+    }
+
+    /// Handles statements.
+    ///
+    /// # Examples
+    /// - `var a = 1;`
+    /// - `print a;`
     pub fn stmt(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("STMT");
-        if self.matches_1(Kw(Keyword::Print)) {
+
+        let stmt = if self.matches_1(Kw(Keyword::Print)) {
             self.print()
         } else {
-            self.expr_statement()
+            self.assign_statement()
+        }?;
+        self.consume(Semicol, Error::ExpectedSemicol("expression".into()))?;
+        Ok(stmt)
+    }
+
+    /// Handles declarations (variable declarations and statements).
+    pub fn decl(&mut self) -> Result<Stmt> {
+        let _dobj = DbgObj::new("DECL");
+        if self.matches_1(Kw(Keyword::Var)) {
+            self.var_decl()
+        } else {
+            self.stmt()
         }
     }
 
-    pub fn program(&mut self) -> Result<Vec<Stmt>> {
+    /// Handles the whole program.
+    pub fn program(&mut self) -> Vec<Stmt> {
+        let _dobj = DbgObj::new("PROG");
         let mut v = vec![];
         while self.curr.is_some() {
-            v.push(self.stmt()?);
+            match self.decl() {
+                Ok(decl) => v.push(decl),
+                Err(e) => {
+                    self.had_error = true;
+                    error!("{}", e);
+                    self.errors.push(e);
+                    self.synchronize();
+                },
+            }
         }
-        Ok(v)
+        v
     }
 
     pub fn synchronize(&mut self) {
@@ -410,6 +521,7 @@ impl Display for Expr {
             Expr::Grouping { expr } => parenthesize("group", &[expr])?,
             Expr::Literal { lit } => format!("{}", lit),
             Expr::Unary { op, right } => parenthesize(&format!("{}", op), &[right])?,
+            Expr::Var(var) => format!("{}", var.lexeme),
         };
         f.write_str(&s)
     }
@@ -419,5 +531,54 @@ pub fn parse(program: &str) -> Result<Vec<Stmt>> {
     let tokenizer = Tokenizer::new(program);
     let it = box tokenizer;
     let mut parser = Parser::new(it);
-    parser.program()
+    let vec = parser.program();
+    if parser.had_error {
+        Err(parser.errors.first().cloned().unwrap())
+    } else {
+        Ok(vec)
+    }
+}
+
+mod tests {
+    use crate::tokenizer::tokenize;
+    use super::{Parser, Error};
+
+    #[test]
+    fn test_parser() {
+        let mut parser = Parser::new(box tokenize("1;"));
+        let _ = parser.program();
+        assert!(!parser.had_error);
+
+        let mut parser = Parser::new(box tokenize("1"));
+        let _ = parser.program();
+        assert_eq!(parser.errors.first().unwrap(), &Error::ExpectedSemicol("expression".into()));
+
+        let mut parser = Parser::new(box tokenize("1 + 2;"));
+        let _ = parser.program();
+        assert!(!parser.had_error);
+
+        let mut parser = Parser::new(box tokenize("1 + true;"));
+        let _ = parser.program();
+        assert!(!parser.had_error);
+
+        let mut parser = Parser::new(box tokenize("1 + var;"));
+        let _ = parser.program();
+        assert_eq!(parser.errors.first().unwrap(), &Error::ExpectedExpression(";".into()));
+
+        let mut parser = Parser::new(box tokenize("var a = 1 + 2;"));
+        let _ = parser.program();
+        assert!(!parser.had_error);
+
+        let mut parser = Parser::new(box tokenize("var a = 1 < 2;"));
+        let _ = parser.program();
+        assert!(!parser.had_error);
+
+        let mut parser = Parser::new(box tokenize("var a = null;"));
+        let _ = parser.program();
+        assert!(!parser.had_error);
+
+        let mut parser = Parser::new(box tokenize("var if = a;"));
+        let _ = parser.program();
+        assert_eq!(parser.errors.first().unwrap(), &Error::ExpectedIdent);
+    }
 }

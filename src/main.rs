@@ -1,8 +1,9 @@
-#![feature(box_syntax)]
+#![feature(box_syntax, try_trait, bool_to_option, try_blocks)]
 
 #[macro_use]
 extern crate err_derive;
 
+pub mod error;
 pub mod interpreter;
 pub mod syntax;
 pub mod tokenizer;
@@ -11,10 +12,7 @@ use crate::interpreter::Interpreter;
 use crate::syntax::{display_arr, parse};
 use log::error;
 use log::LevelFilter;
-use std::collections::HashMap;
-use tokenizer::Literal;
-
-pub static mut VARS: Option<HashMap<String, Literal>> = None;
+use error::Error;
 
 fn main() {
     env_logger::Builder::new()
@@ -22,11 +20,10 @@ fn main() {
         .init();
 
     let mut interpreter = Interpreter::new();
-
     let mut line = r#"
-        print "hello";
-        print true;
-        print 2 + 1;
+        var a = 1336;
+        var b = 3;
+        print c;
     "#.to_owned();
 
     // REPL mode
@@ -35,11 +32,13 @@ fn main() {
         if line.is_empty() {
             stdin.read_line(&mut line).unwrap();
         } else {
-            if let Some(e) = parse(&line).and_then(|stmts| {
+            let result: Result<(), Error> = try {
+                let stmts = parse(&line)?;
                 display_arr(&stmts);
-                interpreter.interpret(stmts)
-            }).err() {
-                error!("Error: {:?}", e);
+                interpreter.interpret(stmts)?;
+            };
+            if let Err(e) = result {
+                error!("{}", e);
             }
             line.clear();
         }

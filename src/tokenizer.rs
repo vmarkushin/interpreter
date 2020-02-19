@@ -1,13 +1,24 @@
 use self::TokenKind::*;
-use crate::VARS;
 use lazy_static::lazy_static;
 use log::debug;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter, Write};
 use std::iter::Peekable;
-use std::str::{Chars, FromStr};
+use std::str::{Chars};
+use std::result;
+use log::error;
+
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+#[error(display = "Tokenizer error.")]
+pub enum Error {
+    #[error(display = "unexpected new line in string")]
+    UnexpectedNewLineInStr,
+    #[error(display = "unexpected new line in string")]
+    InvalidFloat,
+}
+
+pub type Result<R> = result::Result<R, Error>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord)]
 pub enum Operator {
@@ -15,7 +26,7 @@ pub enum Operator {
     Sub,
     Mul,
     Div,
-    Assign,
+    Eq,
     BangEq,
     Not,
     Gt,
@@ -34,7 +45,7 @@ impl Display for Operator {
             Operator::Sub => f.write_str("-"),
             Operator::Mul => f.write_str("*"),
             Operator::Div => f.write_str("/"),
-            Operator::Assign => f.write_str("="),
+            Operator::Eq => f.write_str("="),
             Operator::BangEq => f.write_str("≠"),
             Operator::Gt => f.write_str(">"),
             Operator::Lt => f.write_str("<"),
@@ -48,48 +59,6 @@ impl Display for Operator {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Constant {
-    Pi,
-    E,
-}
-
-impl Constant {
-    pub fn eval(self) -> f64 {
-        match self {
-            Constant::Pi => std::f64::consts::PI,
-            Constant::E => std::f64::consts::E,
-        }
-    }
-}
-
-impl From<Constant> for Literal {
-    fn from(c: Constant) -> Self {
-        Literal::Num(c.eval())
-    }
-}
-
-impl Display for Constant {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Constant::Pi => f.write_str("π"),
-            Constant::E => f.write_str("e"),
-        }
-    }
-}
-
-impl FromStr for Constant {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "pi" => Ok(Constant::Pi),
-            "e" => Ok(Constant::E),
-            _ => Err(()),
-        }
-    }
-}
-
 #[derive(PartialEq, Clone, Debug)]
 pub enum Literal {
     Num(f64),
@@ -98,23 +67,6 @@ pub enum Literal {
 }
 
 impl Eq for Literal {}
-
-impl Literal {
-    pub fn into_num(self) -> f64 {
-        self.try_into().expect("Expected number")
-    }
-}
-
-impl TryInto<f64> for Literal {
-    type Error = ();
-
-    fn try_into(self) -> Result<f64, ()> {
-        match self {
-            Literal::Num(n) => Ok(n),
-            _ => Err(()),
-        }
-    }
-}
 
 impl Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -129,7 +81,6 @@ impl Display for Literal {
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum TokenKind {
     Lit(Literal),
-    Const(Constant),
     Operator(Operator),
     Ident(String),
     Kw(Keyword),
@@ -143,7 +94,7 @@ pub enum TokenKind {
     Unknown,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TokenMeta {
     pub lexeme: String,
     pub line: usize,
@@ -171,7 +122,6 @@ impl Display for TokenKind {
         match self {
             TokenKind::Operator(o) => o.fmt(f),
             TokenKind::Lit(l) => l.fmt(f),
-            TokenKind::Const(c) => c.fmt(f),
             TokenKind::Ident(i) => {
                 f.write_char('`')?;
                 f.write_str(&i)?;
@@ -190,25 +140,6 @@ impl Display for TokenKind {
     }
 }
 
-impl TryFrom<TokenKind> for Literal {
-    type Error = ();
-
-    fn try_from(t: TokenKind) -> Result<Self, ()> {
-        match t {
-            TokenKind::Const(c) => Ok(Literal::Num(c.eval())),
-            TokenKind::Lit(l) => Ok(l),
-            TokenKind::Ident(i) => Ok(unsafe {
-                VARS.as_ref()
-                    .unwrap()
-                    .get(&i)
-                    .map(|x| x.to_owned())
-                    .expect("Unknown variable name")
-            }),
-            _ => Err(()),
-        }
-    }
-}
-
 impl TokenKind {
     pub fn into_lit(self) -> Literal {
         match self {
@@ -220,7 +151,6 @@ impl TokenKind {
     /// Compares token types (not actual values).
     pub fn has_type_like(&self, other: &TokenKind) -> bool {
         match (self, other) {
-            (Const(v0), Const(v1)) => v0 == v1,
             (Operator(v0), Operator(v1)) => v0 == v1,
             (Kw(v0), Kw(v1)) => v0 == v1,
             (Lit(v0), Lit(v1)) => match (v0, v1) {
@@ -280,6 +210,9 @@ lazy_static! {
     static ref KEYWORDS: HashMap<&'static str, Keyword> = {
         let mut m = HashMap::new();
         m.insert("if", Keyword::If);
+        m.insert("else", Keyword::Else);
+        m.insert("for", Keyword::For);
+        m.insert("while", Keyword::While);
         m.insert("loop", Keyword::Loop);
         m.insert("var", Keyword::Var);
         m.insert("ret", Keyword::Ret);
@@ -293,6 +226,9 @@ lazy_static! {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Keyword {
     If,
+    Else,
+    For,
+    While,
     Loop,
     Var,
     Ret,
@@ -305,6 +241,9 @@ impl Display for Keyword {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::If => f.write_str("if"),
+            Self::Else => f.write_str("else"),
+            Self::For => f.write_str("for"),
+            Self::While => f.write_str("while"),
             Self::Loop => f.write_str("loop"),
             Self::Var => f.write_str("var"),
             Self::Ret => f.write_str("ret"),
@@ -339,7 +278,7 @@ impl<'a> Tokenizer<'a> {
     /// Tries to find next token.
     ///
     /// May return `None` even if it is not the end of input yet (e.g. on comment).
-    fn next_token(&mut self) -> Option<Token> {
+    fn next_token(&mut self) -> Option<Result<Token>> {
         let mut first_char = self.next_char()?;
         while first_char.is_whitespace() {
             first_char = self.next_char()?;
@@ -347,71 +286,74 @@ impl<'a> Tokenizer<'a> {
 
         self.start = self.curr - 1;
 
-        let token_kind = match first_char {
-            // Identifier
-            c if is_id_start(c) => self.ident(),
+        let token: Result<Token> = try {
+            let token_kind = match first_char {
+                // Identifier
+                c if is_id_start(c) => self.ident(),
 
-            // TODO: parse floats
-            // Numeric literal
-            _c @ '0'..='9' => {
-                let literal_kind = self.number();
-                Lit(literal_kind)
-            }
-
-            '(' => OpenParen,
-            ')' => ClosedParen,
-            '{' => OpenBrace,
-            '}' => ClosedBrace,
-            '[' => OpenBracket,
-            ']' => ClosedBracket,
-            '-' => Operator(Operator::Sub),
-            '+' => Operator(Operator::Add),
-            '/' => {
-                if self.eat_matches('/') {
-                    while let Some(c) = self.it.peek() {
-                        if *c == '\n' {
-                            break;
-                        }
-                        let _ = self.next_char();
-                    }
-                    return None;
-                } else {
-                    Operator(Operator::Div)
+                // TODO: parse floats
+                // Numeric literal
+                _c @ '0'..='9' => {
+                    let literal_kind = self.number()?;
+                    Lit(literal_kind)
                 }
-            }
-            '*' => Operator(Operator::Mul),
-            '=' => self.assign_or_eq(),
-            ';' => Semicol,
-            '!' => self.not_or_neq(),
-            '<' => self.lt(),
-            '>' => self.gt(),
-            '\n' => {
-                self.col = 0;
-                self.line += 1;
-                return None;
-            }
-            // String literal
-            '"' => self.string(),
-            _ => Unknown,
+
+                '(' => OpenParen,
+                ')' => ClosedParen,
+                '{' => OpenBrace,
+                '}' => ClosedBrace,
+                '[' => OpenBracket,
+                ']' => ClosedBracket,
+                '-' => Operator(Operator::Sub),
+                '+' => Operator(Operator::Add),
+                '/' => {
+                    if self.eat_matches('/') {
+                        while let Some(c) = self.it.peek() {
+                            if *c == '\n' {
+                                break;
+                            }
+                            let _ = self.next_char();
+                        }
+                        return None;
+                    } else {
+                        Operator(Operator::Div)
+                    }
+                }
+                '*' => Operator(Operator::Mul),
+                '=' => self.assign_or_eq(),
+                ';' => Semicol,
+                '!' => self.not_or_neq(),
+                '<' => self.lt(),
+                '>' => self.gt(),
+                '\n' => {
+                    self.col = 0;
+                    self.line += 1;
+                    return None;
+                }
+                // String literal
+                '"' => self.string()?,
+                _ => Unknown,
+            };
+
+            let lexeme = self.curr_lexeme();
+
+            let token = Token {
+                kind: token_kind,
+                meta: TokenMeta {
+                    lexeme,
+                    line: self.line,
+                    column: self.col,
+                },
+            };
+
+            let remaining_input: String = self.input.chars().skip(self.curr).collect();
+            debug!(
+                "Parsed token '{:?}' ({}). Rem: {}",
+                token.kind, token.meta.lexeme, remaining_input
+            );
+
+            token
         };
-
-        let lexeme = self.curr_lexeme();
-
-        let token = Token {
-            kind: token_kind,
-            meta: TokenMeta {
-                lexeme,
-                line: self.line,
-                column: self.col,
-            },
-        };
-
-        let remaining_input: String = self.input.chars().skip(self.curr).collect();
-        debug!(
-            "Parsed token '{}' ({}). Rem: {}",
-            token.kind, token.meta.lexeme, remaining_input
-        );
-
         Some(token)
     }
 
@@ -454,7 +396,7 @@ impl<'a> Tokenizer<'a> {
         if self.eat_matches('=') {
             Operator(Operator::EqEq)
         } else {
-            Operator(Operator::Assign)
+            Operator(Operator::Eq)
         }
     }
 
@@ -494,19 +436,19 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn number(&mut self) -> Literal {
+    fn number(&mut self) -> Result<Literal> {
         self.eat_while(|x| x.is_digit(10));
         let string = self.curr_lexeme();
-        Literal::Num(string.parse().expect("Expected float"))
+        Ok(Literal::Num(string.parse().map_err(|_| Error::InvalidFloat)?))
     }
 
-    fn string(&mut self) -> TokenKind {
+    fn string(&mut self) -> Result<TokenKind> {
         let start_line = self.line;
         let mut terminated = false;
 
         while let Some(c) = self.next_char() {
             if c == '\n' {
-                panic!("Unexpected new line in string at {}", self.line);
+                return Err(Error::UnexpectedNewLineInStr);
             } else if c == '"' {
                 terminated = true;
                 break;
@@ -523,23 +465,29 @@ impl<'a> Tokenizer<'a> {
             .skip(self.start + 1)
             .take(self.curr - self.start - 2)
             .collect();
-        TokenKind::Lit(Literal::Str(string))
+        Ok(TokenKind::Lit(Literal::Str(string)))
     }
 }
 
 impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Token;
+    type Item = Result<Token>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut token = self.next_token();
         while token.is_none() && !self.is_eof() {
             token = self.next_token();
         }
-        token
+        token.and_then(|result| match result {
+            Ok(token) => Some(token),
+            Err(e) => {
+                error!("{}", e);
+                None
+            },
+        })
     }
 }
 
-pub fn tokenize(input: &str) -> impl Iterator<Item = Token> + '_ {
+pub fn tokenize(input: &str) -> impl Iterator<Item = Result<Token>> + '_ {
     Tokenizer::new(input)
 }
 
@@ -586,7 +534,10 @@ fn test_tokenizer_kinds() -> fmt::Result {
     assert_eq!(ts.as_slice(), &[TokenKind::Kw(Keyword::Print)][..]);
 
     let ts: Vec<_> = tokenize("=").map(Token::into_kind).collect();
-    assert_eq!(ts.as_slice(), &[TokenKind::Operator(Operator::Assign)][..]);
+    assert_eq!(ts.as_slice(), &[TokenKind::Operator(Operator::Eq)][..]);
+
+    let ts: Vec<_> = tokenize("$").map(Token::into_kind).collect();
+    assert_eq!(ts.as_slice(), &[TokenKind::Unknown][..]);
 
     let ts: Vec<_> = tokenize("==").map(Token::into_kind).collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Operator(Operator::EqEq)][..]);
@@ -596,6 +547,12 @@ fn test_tokenizer_kinds() -> fmt::Result {
 
     let ts: Vec<_> = tokenize("1").map(Token::into_kind).collect();
     assert_eq!(ts.as_slice(), &[TokenKind::Lit(Literal::Num(1.0))][..]);
+
+    let ts: Vec<_> = tokenize(r#""hello""#).map(Token::into_kind).collect();
+    assert_eq!(ts.as_slice(), &[TokenKind::Lit(Literal::Str("hello".into()))][..]);
+
+    let ts: Vec<_> = tokenize("\"he\nllo\"").map(Token::into_kind).collect();
+    assert_eq!(ts.as_slice(), &[TokenKind::Lit(Literal::Str("hello".into()))][..]);
 
     let ts: Vec<_> = tokenize("true false").map(Token::into_kind).collect();
     assert_eq!(
@@ -622,7 +579,7 @@ fn test_tokenizer_kinds() -> fmt::Result {
             TokenKind::Kw(Keyword::True),
             TokenKind::OpenBrace,
             TokenKind::Ident("b".to_string()),
-            TokenKind::Operator(Operator::Assign),
+            TokenKind::Operator(Operator::Eq),
             TokenKind::Lit(Literal::Num(3.0)),
             TokenKind::Operator(Operator::Mul),
             TokenKind::Operator(Operator::Sub),
