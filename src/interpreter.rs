@@ -18,6 +18,8 @@ pub enum Error {
     UndefinedVar(String),
     #[error(display = "variable `{}` is null", _0)]
     NullVar(String),
+    #[error(display = "expected type `bool`")]
+    ExpectedBool,
 }
 
 pub type Result<R> = result::Result<R, Error>;
@@ -47,6 +49,9 @@ impl Add<Value> for Value {
     fn add(self, rhs: Value) -> Self::Output {
         match (self, rhs) {
             (Num(a), Num(b)) => Some(Num(a + b)),
+            (Num(a), Str(b)) => Some(Str(format!("{}{}", a, b))),
+            (Str(a), Str(b)) => Some(Str(format!("{}{}", a, b))),
+            (Str(a), Num(b)) => Some(Str(format!("{}{}", a, b))),
             _ => None,
         }
     }
@@ -117,6 +122,12 @@ impl Or<Value> for Value {
     type Output = Option<Value>;
 
     fn or(self, rhs: Value) -> Self::Output {
+        if let Bool(a) = self {
+            if a == true {
+                return Some(Bool(true));
+            }
+        }
+
         match (self, rhs) {
             (Bool(a), Bool(b)) => Some(Bool(a || b)),
             _ => None,
@@ -169,11 +180,11 @@ impl Env {
         self.vars.insert(name, val);
     }
 
-    pub fn assign(&mut self, name: String, val: Value) -> Result<()> {
-        if !self.vars.contains_key(&name) {
-            return Err(Error::UndefinedVar(name));
+    pub fn assign(&mut self, name: &str, val: Value) -> Result<()> {
+        if !self.vars.contains_key(name) {
+            return Err(Error::UndefinedVar(name.to_owned()));
         }
-        self.vars.insert(name, val);
+        self.vars.insert(name.to_owned(), val);
         Ok(())
     }
 
@@ -192,33 +203,77 @@ impl Interpreter {
         Interpreter::default()
     }
 
-    pub fn eval(&self, expr: Expr) -> Result<Value> {
+    pub fn eval(&self, expr: &Expr) -> Result<Value> {
         match expr {
-            Expr::Literal { lit } => Ok(lit.into()),
+            Expr::Literal { lit } => Ok(lit.clone().into()),
             Expr::Binary { left, op, right } => {
-                let l = self.eval(*left)?;
-                let r = self.eval(*right)?;
-                match op {
-                    Operator::Add => l + r,
-                    Operator::Sub => l - r,
-                    Operator::Div => l / r,
-                    Operator::Mul => l * r,
-                    Operator::Eq => None,
-                    Operator::BangEq => Some(Bool(l != r)),
-                    Operator::EqEq => Some(Bool(l == r)),
-                    Operator::Gt => l.partial_cmp(&r).map(|o| Bool(o == Greater)),
-                    Operator::Lt => l.partial_cmp(&r).map(|o| Bool(o == Less)),
-                    Operator::GtEq => l.partial_cmp(&r).map(|o| Bool(o == Greater || o == Equal)),
-                    Operator::LtEq => l.partial_cmp(&r).map(|o| Bool(o == Less || o == Equal)),
-                    Operator::And => l.and(r),
-                    Operator::Or => l.or(r),
-                    Operator::Not => panic!("Unexpected unary operator `!` in binary operation"),
+                if op == &Operator::And || op == &Operator::Or {
+                    // use short-circuit evaluation for boolean operators
+                    match op {
+                        Operator::And => {
+                            let l = self.eval(left)?;
+                            if let Bool(a) = l {
+                                if a == false {
+                                    Some(Bool(false))
+                                } else {
+                                    let r = self.eval(right)?;
+                                    if let Bool(b) = r {
+                                        Some(Bool(b))
+                                    } else {
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        Operator::Or => {
+                            let l = self.eval(left)?;
+                            if let Bool(a) = l {
+                                if a == true {
+                                    Some(Bool(true))
+                                } else {
+                                    let r = self.eval(right)?;
+                                    if let Bool(b) = r {
+                                        Some(Bool(b))
+                                    } else {
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    let l = self.eval(left)?;
+                    let r = self.eval(right)?;
+                    match op {
+                        Operator::Add => l + r,
+                        Operator::Sub => l - r,
+                        Operator::Div => l / r,
+                        Operator::Mul => l * r,
+                        Operator::Eq => None,
+                        Operator::BangEq => Some(Bool(l != r)),
+                        Operator::EqEq => Some(Bool(l == r)),
+                        Operator::Gt => l.partial_cmp(&r).map(|o| Bool(o == Greater)),
+                        Operator::Lt => l.partial_cmp(&r).map(|o| Bool(o == Less)),
+                        Operator::GtEq => {
+                            l.partial_cmp(&r).map(|o| Bool(o == Greater || o == Equal))
+                        }
+                        Operator::LtEq => l.partial_cmp(&r).map(|o| Bool(o == Less || o == Equal)),
+                        Operator::Not => {
+                            panic!("Unexpected unary operator `!` in binary operation")
+                        }
+                        Operator::And | Operator::Or => unreachable!(),
+                    }
                 }
                 .ok_or_else(|| Error::UnsupportedOperation(format!("{}", op)))
             }
-            Expr::Grouping { expr } => self.eval(*expr),
+            Expr::Grouping { expr } => self.eval(expr),
             Expr::Unary { op, right } => {
-                let r = self.eval(*right)?;
+                let r = self.eval(right)?;
                 match op {
                     Operator::Sub => Value::from(Literal::Num(-1.0)) * r,
                     Operator::Not => !r,
@@ -230,11 +285,11 @@ impl Interpreter {
                 .env
                 .get(&var.lexeme)
                 .cloned()
-                .ok_or_else(|| Error::UndefinedVar(var.lexeme)),
+                .ok_or_else(|| Error::UndefinedVar(var.lexeme.clone())),
         }
     }
 
-    pub fn execute(&mut self, stmt: Stmt) -> Result<()> {
+    pub fn execute(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
             Stmt::Expr(e) => {
                 self.eval(e)?;
@@ -249,16 +304,52 @@ impl Interpreter {
                 } else {
                     Value::Null
                 };
-                self.env.define(name.lexeme, val);
+                self.env.define(name.lexeme.clone(), val);
             }
             Stmt::VarAssign { name, value } => {
-                self.env.assign(name.lexeme, self.eval(value)?)?;
+                self.env.assign(&name.lexeme, self.eval(value)?)?;
             }
+            Stmt::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                let val = self.eval(cond)?;
+                match val {
+                    Bool(b) => {
+                        if b {
+                            for stmt in then {
+                                self.execute(stmt)?;
+                            }
+                        } else if let Some(other) = otherwise {
+                            for stmt in other {
+                                self.execute(stmt)?;
+                            }
+                        }
+                    }
+                    _ => return Err(Error::ExpectedBool),
+                }
+            }
+            Stmt::While { cond, actions } => loop {
+                let val = self.eval(&cond)?;
+                match val {
+                    Bool(b) => {
+                        if b {
+                            for stmt in actions {
+                                self.execute(stmt)?;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => return Err(Error::ExpectedBool),
+                }
+            },
         };
         Ok(())
     }
 
-    pub fn interpret(&mut self, stmts: Vec<Stmt>) -> Result<()> {
+    pub fn interpret(&mut self, stmts: &[Stmt]) -> Result<()> {
         for stmt in stmts {
             self.execute(stmt)?;
         }
@@ -276,27 +367,27 @@ mod tests {
 
         let program = "var a = 1;";
         let stmts = parse(&program).unwrap();
-        interpreter.interpret(stmts)?;
+        interpreter.interpret(&stmts)?;
         assert_eq!(interpreter.env.vars.get("a").unwrap(), &Value::Num(1.0));
 
         let program = "a = 2;";
         let stmts = parse(&program).unwrap();
-        interpreter.interpret(stmts)?;
+        interpreter.interpret(&stmts)?;
         assert_eq!(interpreter.env.vars.get("a").unwrap(), &Value::Num(2.0));
 
         let program = "var a = 0;";
         let stmts = parse(&program).unwrap();
-        interpreter.interpret(stmts)?;
+        interpreter.interpret(&stmts)?;
         assert_eq!(interpreter.env.vars.get("a").unwrap(), &Value::Num(0.0));
 
         let program = "b = 0;";
         let stmts = parse(&program).unwrap();
-        let error = interpreter.interpret(stmts).err().unwrap();
+        let error = interpreter.interpret(&stmts).err().unwrap();
         assert_eq!(error, Error::UndefinedVar("b".into()));
 
         let program = "var b = a;";
         let stmts = parse(&program).unwrap();
-        interpreter.interpret(stmts)?;
+        interpreter.interpret(&stmts)?;
         assert_eq!(
             interpreter.env.vars.get("b").unwrap(),
             interpreter.env.vars.get("a").unwrap()
@@ -326,29 +417,104 @@ mod tests {
         //    assert_eq!(res, Value::Bool(true));
 
         let mut expr = "1 - 2 * 3;";
-        let exprs = parse(&mut expr)?.pop().unwrap().into_expr();
-        let res = interpreter.eval(exprs)?;
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
         assert_eq!(res, Value::Num(-5.0));
 
         let mut expr = "(( (1) - (2) * (3) ));";
-        let exprs = parse(&mut expr)?.pop().unwrap().into_expr();
-        let res = interpreter.eval(exprs)?;
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
         assert_eq!(res, Value::Num(-5.0));
 
         let mut expr = "1 - (2 * 3);";
-        let exprs = parse(&mut expr)?.pop().unwrap().into_expr();
-        let res = interpreter.eval(exprs)?;
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
         assert_eq!(res, Value::Num(-5.0));
 
         let mut expr = "(1 - 2) * 3;";
-        let exprs = parse(&mut expr)?.pop().unwrap().into_expr();
-        let res = interpreter.eval(exprs)?;
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
         assert_eq!(res, Value::Num(-3.0));
 
         let mut expr = "1 - (2 * 3) < 4;";
-        let exprs = parse(&mut expr)?.pop().unwrap().into_expr();
-        let res = interpreter.eval(exprs)?;
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
         assert_eq!(res, Value::Bool(true));
+
+        let mut expr = "true && true;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(true));
+
+        let mut expr = "false && true;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(false));
+
+        let mut expr = "false && false;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(false));
+
+        let mut expr = "true && false;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(false));
+
+        let mut expr = "true || true;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(true));
+
+        let mut expr = "false || true;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(true));
+
+        let mut expr = "true || false;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(true));
+
+        let mut expr = "false || false;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(false));
+
+        let mut expr = "false || false || true;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(true));
+
+        let mut expr = "false || true && true;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(true));
+
+        let mut expr = "1 < 2 && 2 < 3;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(true));
+
+        let mut expr = "1 < 2 && 2 > 3;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(false));
+
+        let mut expr = "1 + 1 < 2 + 1 && 2 - 1 > 3 - 1;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(false));
+
+        let mut expr = "1 == 1 && true;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(true));
+
+        let mut expr = "1 == 1 == 1;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Value::Bool(false));
 
         // TODO: expressions, starting with operator
 
@@ -358,13 +524,13 @@ mod tests {
         //    assert_eq!(res, Value::Bool(false));
 
         let mut expr = "1 - (2 * 3) < 4 != false;";
-        let exprs = parse(&mut expr)?.pop().unwrap().into_expr();
-        let res = interpreter.eval(exprs)?;
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
         assert_eq!(res, Value::Bool(true));
 
         let mut expr = "print 1 - (2 * 3) < 4 != false;";
         let stmt = parse(&mut expr)?;
-        interpreter.interpret(stmt)?;
+        interpreter.interpret(&stmt)?;
 
         Ok(())
     }

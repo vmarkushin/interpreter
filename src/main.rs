@@ -13,35 +13,58 @@ use crate::syntax::{display_arr, parse};
 use error::Error;
 use log::error;
 use log::LevelFilter;
+use std::env::args;
+use std::fs::read_to_string;
+use std::path::Path;
 
 fn main() {
     env_logger::Builder::new()
+        .format_timestamp(None)
         .filter_level(LevelFilter::Debug)
         .init();
 
     let mut interpreter = Interpreter::new();
-    let mut line = r#"
+
+    let default_prog = r#"
         var a = 1336;
         var b = 1;
         print b + a;
-    "#
-    .to_owned();
+
+        if b == 1 && a == 1337 - 1 {
+            print "yes!";
+        } else {
+            print "no...";
+        }
+
+        b = 10;
+        while b > 0 {
+            print "Counting down... " + b;
+            b = b - 1;
+        }
+
+        print "Off blast!";
+    "#;
+    let mut prog = args()
+        .skip(1)
+        .next()
+        .map(|file| read_to_string(Path::new(&file)).expect("invalid file"))
+        .unwrap_or(default_prog.to_owned());
 
     // REPL mode
     let stdin = std::io::stdin();
     loop {
-        if line.is_empty() {
-            stdin.read_line(&mut line).unwrap();
+        if prog.is_empty() {
+            stdin.read_line(&mut prog).unwrap();
         } else {
             let result: Result<(), Error> = try {
-                let stmts = parse(&line)?;
+                let stmts = parse(&prog)?;
                 display_arr(&stmts);
-                interpreter.interpret(stmts)?;
+                interpreter.interpret(&stmts)?;
             };
             if let Err(e) = result {
                 error!("{}", e);
             }
-            line.clear();
+            prog.clear();
         }
     }
 }

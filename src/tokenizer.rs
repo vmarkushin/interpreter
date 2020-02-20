@@ -82,17 +82,29 @@ impl Display for Literal {
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum TokenKind {
+    /// Literal
     Lit(Literal),
-    Operator(Operator),
+    /// Operator
+    Op(Operator),
+    /// Identifier
     Ident(String),
+    /// Keyword
     Kw(Keyword),
+    /// '('
     OpenParen,
+    /// ')'
     ClosedParen,
+    /// '['
     OpenBracket,
+    /// ']'
     ClosedBracket,
+    /// '{'
     OpenBrace,
+    /// '}'
     ClosedBrace,
+    /// ';'
     Semicol,
+    /// Unknown token
     Unknown,
 }
 
@@ -122,7 +134,7 @@ impl Token {
 impl Display for TokenKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            TokenKind::Operator(o) => o.fmt(f),
+            TokenKind::Op(o) => o.fmt(f),
             TokenKind::Lit(l) => l.fmt(f),
             TokenKind::Ident(i) => {
                 f.write_char('`')?;
@@ -132,10 +144,10 @@ impl Display for TokenKind {
             TokenKind::Kw(kw) => kw.fmt(f),
             TokenKind::OpenParen => f.write_str("("),
             TokenKind::ClosedParen => f.write_str(")"),
-            TokenKind::OpenBracket => f.write_str("{"),
-            TokenKind::ClosedBracket => f.write_str("}"),
-            TokenKind::OpenBrace => f.write_str("["),
-            TokenKind::ClosedBrace => f.write_str("]"),
+            TokenKind::OpenBracket => f.write_str("["),
+            TokenKind::ClosedBracket => f.write_str("]"),
+            TokenKind::OpenBrace => f.write_str("{"),
+            TokenKind::ClosedBrace => f.write_str("}"),
             TokenKind::Semicol => f.write_str(";"),
             TokenKind::Unknown => f.write_str("UNKNOWN"),
         }
@@ -146,7 +158,7 @@ impl TokenKind {
     /// Compares token types (not actual values).
     pub fn has_type_like(&self, other: &TokenKind) -> bool {
         match (self, other) {
-            (Operator(v0), Operator(v1)) => v0 == v1,
+            (Op(v0), Op(v1)) => v0 == v1,
             (Kw(v0), Kw(v1)) => v0 == v1,
             (Lit(v0), Lit(v1)) => match (v0, v1) {
                 (Literal::Bool(v0), Literal::Bool(v1)) => v0 == v1,
@@ -165,7 +177,7 @@ impl TokenKind {
     }
 
     pub fn is_operator(&self) -> bool {
-        matches!(self, Self::Operator(_))
+        matches!(self, Self::Op(_))
     }
 
     pub fn is_literal(&self) -> bool {
@@ -177,7 +189,7 @@ impl TokenKind {
     }
 
     pub fn as_operator(&self) -> Option<Operator> {
-        if let Self::Operator(op) = self {
+        if let Self::Op(op) = self {
             Some(*op)
         } else {
             None
@@ -275,7 +287,7 @@ impl<'a> Tokenizer<'a> {
     /// May return `None` even if it is not the end of input yet (e.g. on comment).
     fn next_token(&mut self) -> Option<Result<Token>> {
         let mut first_char = self.next_char()?;
-        while first_char.is_whitespace() {
+        while first_char.is_whitespace() && first_char != '\n' {
             first_char = self.next_char()?;
         }
 
@@ -299,10 +311,24 @@ impl<'a> Tokenizer<'a> {
                 '}' => ClosedBrace,
                 '[' => OpenBracket,
                 ']' => ClosedBracket,
-                '-' => Operator(Operator::Sub),
-                '+' => Operator(Operator::Add),
+                '-' => Op(Operator::Sub),
+                '+' => Op(Operator::Add),
+                '&' => {
+                    if self.matches_eat('&') {
+                        Op(Operator::And)
+                    } else {
+                        unimplemented!("binary and")
+                    }
+                }
+                '|' => {
+                    if self.matches_eat('|') {
+                        Op(Operator::Or)
+                    } else {
+                        unimplemented!("binary or")
+                    }
+                }
                 '/' => {
-                    if self.eat_matches('/') {
+                    if self.matches_eat('/') {
                         while let Some(c) = self.it.peek() {
                             if *c == '\n' {
                                 break;
@@ -311,10 +337,10 @@ impl<'a> Tokenizer<'a> {
                         }
                         return None;
                     } else {
-                        Operator(Operator::Div)
+                        Op(Operator::Div)
                     }
                 }
-                '*' => Operator(Operator::Mul),
+                '*' => Op(Operator::Mul),
                 '=' => self.assign_or_eq(),
                 ';' => Semicol,
                 '!' => self.not_or_neq(),
@@ -341,10 +367,15 @@ impl<'a> Tokenizer<'a> {
                 },
             };
 
-            let remaining_input: String = self.input.chars().skip(self.curr).collect();
+            let remaining_input: String = self
+                .input
+                .chars()
+                .skip(self.curr)
+                .take_while(|c| *c != '\n')
+                .collect();
             debug!(
-                "Parsed token '{:?}' ({}). Rem: {}",
-                token.kind, token.meta.lexeme, remaining_input
+                "Parsed token {:?} `{}`. Rem: {}: {}",
+                token.kind, token.meta.lexeme, self.line, remaining_input
             );
 
             token
@@ -366,7 +397,7 @@ impl<'a> Tokenizer<'a> {
             .collect()
     }
 
-    fn eat_matches(&mut self, expect: char) -> bool {
+    fn matches_eat(&mut self, expect: char) -> bool {
         let b = self.it.peek().map_or(false, |c| *c == expect);
         if b {
             let _ = self.next_char();
@@ -388,34 +419,34 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn assign_or_eq(&mut self) -> TokenKind {
-        if self.eat_matches('=') {
-            Operator(Operator::EqEq)
+        if self.matches_eat('=') {
+            Op(Operator::EqEq)
         } else {
-            Operator(Operator::Eq)
+            Op(Operator::Eq)
         }
     }
 
     fn not_or_neq(&mut self) -> TokenKind {
-        if self.eat_matches('=') {
-            Operator(Operator::BangEq)
+        if self.matches_eat('=') {
+            Op(Operator::BangEq)
         } else {
-            Operator(Operator::Not)
+            Op(Operator::Not)
         }
     }
 
     fn lt(&mut self) -> TokenKind {
-        if self.eat_matches('=') {
-            Operator(Operator::LtEq)
+        if self.matches_eat('=') {
+            Op(Operator::LtEq)
         } else {
-            Operator(Operator::Lt)
+            Op(Operator::Lt)
         }
     }
 
     fn gt(&mut self) -> TokenKind {
-        if self.eat_matches('=') {
-            Operator(Operator::GtEq)
+        if self.matches_eat('=') {
+            Op(Operator::GtEq)
         } else {
-            Operator(Operator::Gt)
+            Op(Operator::Gt)
         }
     }
 
@@ -543,7 +574,7 @@ fn test_tokenizer_kinds() -> fmt::Result {
         .map(Result::unwrap)
         .map(Token::into_kind)
         .collect();
-    assert_eq!(ts.as_slice(), &[TokenKind::Operator(Operator::Eq)][..]);
+    assert_eq!(ts.as_slice(), &[TokenKind::Op(Operator::Eq)][..]);
 
     let ts: Vec<_> = tokenize("$")
         .map(Result::unwrap)
@@ -555,13 +586,20 @@ fn test_tokenizer_kinds() -> fmt::Result {
         .map(Result::unwrap)
         .map(Token::into_kind)
         .collect();
-    assert_eq!(ts.as_slice(), &[TokenKind::Operator(Operator::EqEq)][..]);
+    assert_eq!(ts.as_slice(), &[TokenKind::Op(Operator::EqEq)][..]);
 
-    let ts: Vec<_> = tokenize("!=")
+    let ts: Vec<_> = tokenize("!= && ||")
         .map(Result::unwrap)
         .map(Token::into_kind)
         .collect();
-    assert_eq!(ts.as_slice(), &[TokenKind::Operator(Operator::BangEq)][..]);
+    assert_eq!(
+        ts.as_slice(),
+        &[
+            TokenKind::Op(Operator::BangEq),
+            TokenKind::Op(Operator::And),
+            TokenKind::Op(Operator::Or)
+        ][..]
+    );
 
     let ts: Vec<_> = tokenize("1")
         .map(Result::unwrap)
@@ -578,7 +616,7 @@ fn test_tokenizer_kinds() -> fmt::Result {
         &[TokenKind::Lit(Literal::Str("hello".into()))][..]
     );
 
-    let mut ts: Vec<_> = tokenize("\"he\nllo\"").map(Result::unwrap_err).collect();
+    let ts: Vec<_> = tokenize("\"he\nllo\"").map(Result::unwrap_err).collect();
     assert_eq!(ts.as_slice(), &[Error::UnexpectedNewLineInStr][..]);
 
     let ts: Vec<_> = tokenize("true false")
@@ -612,14 +650,14 @@ fn test_tokenizer_kinds() -> fmt::Result {
         &[
             TokenKind::Kw(Keyword::If),
             TokenKind::Ident("a".to_string()),
-            TokenKind::Operator(Operator::EqEq),
+            TokenKind::Op(Operator::EqEq),
             TokenKind::Kw(Keyword::True),
             TokenKind::OpenBrace,
             TokenKind::Ident("b".to_string()),
-            TokenKind::Operator(Operator::Eq),
+            TokenKind::Op(Operator::Eq),
             TokenKind::Lit(Literal::Num(3.0)),
-            TokenKind::Operator(Operator::Mul),
-            TokenKind::Operator(Operator::Sub),
+            TokenKind::Op(Operator::Mul),
+            TokenKind::Op(Operator::Sub),
             TokenKind::Lit(Literal::Num(2.0)),
             TokenKind::Semicol,
             TokenKind::ClosedBrace,

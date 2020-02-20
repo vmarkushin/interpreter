@@ -1,3 +1,4 @@
+use crate::tokenizer::Keyword::Else;
 use crate::tokenizer::{
     Error as TokError, Keyword, Literal,
     Operator::{self, *},
@@ -55,6 +56,15 @@ pub enum Stmt {
         name: TokenMeta,
         value: Expr,
     },
+    If {
+        cond: Expr,
+        then: Vec<Stmt>,
+        otherwise: Option<Vec<Stmt>>,
+    },
+    While {
+        cond: Expr,
+        actions: Vec<Stmt>,
+    },
 }
 
 impl Stmt {
@@ -92,6 +102,49 @@ impl Display for Stmt {
                 value.fmt(f)?;
                 f.write_str(")")
             }
+            Stmt::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                f.write_str("(if ")?;
+                cond.fmt(f)?;
+                f.write_char(' ')?;
+
+                f.write_char('[')?;
+                for s in then {
+                    s.fmt(f)?;
+                    f.write_char(',')?;
+                }
+                f.write_char(']')?;
+
+                if let Some(other) = otherwise {
+                    f.write_char(' ')?;
+
+                    f.write_char('[')?;
+                    for s in other {
+                        s.fmt(f)?;
+                        f.write_char(',')?;
+                    }
+                    f.write_char(']')?;
+                }
+
+                f.write_str(")")
+            }
+            Stmt::While { cond, actions } => {
+                f.write_str("(while ")?;
+                cond.fmt(f)?;
+                f.write_char(' ')?;
+
+                f.write_char('[')?;
+                for s in actions {
+                    s.fmt(f)?;
+                    f.write_char(',')?;
+                }
+                f.write_char(']')?;
+
+                f.write_str(")")
+            }
         }
     }
 }
@@ -102,7 +155,7 @@ pub fn display_arr<T: Display>(arr: &[T]) {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Binary {
         left: Box<Expr>,
@@ -212,7 +265,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn consume(&mut self, t0: TokenKind, err: Error) -> Result<Token> {
+    fn consume(&mut self, t0: TokenKind, err: Error) -> Result<Token> {
         match self.curr.take() {
             Some(t) if t.kind.has_type_like(&t0) => {
                 self.advance();
@@ -222,7 +275,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn matches_any(&mut self, ts: &[TokenKind]) -> bool {
+    fn matches_any(&mut self, ts: &[TokenKind]) -> bool {
         match &self.curr_kind() {
             Some(t) => {
                 for ti in ts {
@@ -237,25 +290,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn matches_1(&mut self, t0: TokenKind) -> bool {
+    fn matches_1(&mut self, t0: TokenKind) -> bool {
         self.matches_any(&[t0])
     }
 
-    pub fn matches_2(&mut self, t0: TokenKind, t1: TokenKind) -> bool {
+    fn matches_2(&mut self, t0: TokenKind, t1: TokenKind) -> bool {
         self.matches_any(&[t0, t1])
     }
 
-    pub fn primary(&mut self) -> Result<Box<Expr>> {
+    fn primary(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("PRIMARY");
 
         if self.matches_1(Kw(Keyword::True)) {
-            return Ok(box Expr::Literal {
+            return Ok(Expr::Literal {
                 lit: Literal::Bool(true),
             });
         }
 
         if self.matches_1(Kw(Keyword::False)) {
-            return Ok(box Expr::Literal {
+            return Ok(Expr::Literal {
                 lit: Literal::Bool(false),
             });
         }
@@ -264,21 +317,21 @@ impl<'a> Parser<'a> {
         match self.curr_kind() {
             Some(Lit(lit)) => {
                 self.advance();
-                return Ok(box Expr::Literal { lit });
+                return Ok(Expr::Literal { lit });
             }
             _ => {}
         }
 
         if let Some(Ident(_)) = self.curr_kind() {
-            let var_expr = box Expr::Var(self.curr_meta().unwrap());
+            let var_expr = Expr::Var(self.curr_meta().unwrap());
             self.advance();
             return Ok(var_expr);
         }
 
         if self.matches_1(OpenParen) {
-            let expr = self.expr()?;
+            let expr = box self.expr()?;
             self.consume(ClosedParen, Error::ExpectedClosedParen)?;
-            Ok(box Expr::Grouping { expr })
+            Ok(Expr::Grouping { expr })
         } else {
             match self.peek_kind()? {
                 Some(kind) => Err(Error::ExpectedExpression(format!("{}", kind))),
@@ -287,13 +340,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn unary(&mut self) -> Result<Box<Expr>> {
+    fn unary(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("UNARY");
 
         if let Some(t) = &self.curr_kind() {
             #[allow(clippy::single_match)]
             match *t {
-                TokenKind::Operator(op) => match op {
+                TokenKind::Op(op) => match op {
                     Sub => (),
                     _ => return Err(Error::ExpectedExpression(format!("{}", op))),
                 },
@@ -301,33 +354,33 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if self.matches_2(Operator(Not), Operator(Sub)) {
+        if self.matches_2(Op(Not), Op(Sub)) {
             let op = self
                 .prev_kind()
                 .unwrap()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.unary()?;
-            Ok(box Expr::Unary { op, right })
+            let right = box self.unary()?;
+            Ok(Expr::Unary { op, right })
         } else {
             self.primary()
         }
     }
 
-    pub fn mul_div(&mut self) -> Result<Box<Expr>> {
+    fn mul_div(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("MUL");
 
         let mut expr = self.unary()?;
-        while self.matches_2(Operator(Mul), Operator(Div)) {
+        while self.matches_2(Op(Mul), Op(Div)) {
             let op = self
                 .prev_kind()
                 .expect("expected token")
                 .clone()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.unary()?;
-            expr = box Expr::Binary {
-                left: expr,
+            let right = box self.unary()?;
+            expr = Expr::Binary {
+                left: box expr,
                 op,
                 right,
             };
@@ -335,20 +388,20 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    pub fn add_sub(&mut self) -> Result<Box<Expr>> {
+    fn add_sub(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("ADD");
 
         let mut expr = self.mul_div()?;
-        while self.matches_2(Operator(Sub), Operator(Add)) {
+        while self.matches_2(Op(Sub), Op(Add)) {
             let op = self
                 .prev_kind()
                 .expect("expected token")
                 .clone()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.mul_div()?;
-            expr = box Expr::Binary {
-                left: expr,
+            let right = box self.mul_div()?;
+            expr = Expr::Binary {
+                left: box expr,
                 op,
                 right,
             };
@@ -356,20 +409,20 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    pub fn comp(&mut self) -> Result<Box<Expr>> {
+    fn comp(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("COMP");
 
         let mut expr = self.add_sub()?;
-        while self.matches_any(&[Operator(Lt), Operator(Gt), Operator(LtEq), Operator(GtEq)]) {
+        while self.matches_any(&[Op(Lt), Op(Gt), Op(LtEq), Op(GtEq)]) {
             let op = self
                 .prev_kind()
                 .expect("expected token")
                 .clone()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.add_sub()?;
-            expr = box Expr::Binary {
-                left: expr,
+            let right = box self.add_sub()?;
+            expr = Expr::Binary {
+                left: box expr,
                 op,
                 right,
             };
@@ -377,21 +430,21 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    pub fn eq(&mut self) -> Result<Box<Expr>> {
+    fn eq(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("EQ");
 
         let mut expr = self.comp()?;
 
-        while self.matches_2(Operator(BangEq), Operator(EqEq)) {
+        while self.matches_2(Op(BangEq), Op(EqEq)) {
             let op = self
                 .prev_kind()
                 .expect("expected token")
                 .clone()
                 .as_operator()
                 .expect("expected operator");
-            let right = self.comp()?;
-            expr = box Expr::Binary {
-                left: expr,
+            let right = box self.comp()?;
+            expr = Expr::Binary {
+                left: box expr,
                 op,
                 right,
             };
@@ -399,9 +452,48 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    fn and(&mut self) -> Result<Expr> {
+        let _dobj = DbgObj::new("AND");
+
+        let mut expr = self.eq()?;
+
+        while self.matches_1(Op(And)) {
+            let right = box self.eq()?;
+            expr = Expr::Binary {
+                left: box expr,
+                op: And,
+                right,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn or(&mut self) -> Result<Expr> {
+        let _dobj = DbgObj::new("OR");
+
+        let mut expr = self.and()?;
+
+        while self.matches_1(Op(Or)) {
+            let right = box self.and()?;
+            expr = Expr::Binary {
+                left: box expr,
+                op: Or,
+                right,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    pub fn expr(&mut self) -> Result<Expr> {
+        let _dobj = DbgObj::new("EXPR");
+        self.or()
+    }
+
     pub fn expr_statement(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("EXPR STMT");
-        let expr = *self.expr()?;
+        let expr = self.expr()?;
         Ok(Stmt::Expr(expr))
     }
 
@@ -409,15 +501,16 @@ impl<'a> Parser<'a> {
     ///
     /// # Examples
     /// - `a = 1;`
-    pub fn assign_statement(&mut self) -> Result<Stmt> {
+    pub fn assign_stmt(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("ASSIGN STMT");
 
         let expr_stmt = self.expr_statement()?;
 
-        if self.matches_1(Operator(Operator::Eq)) {
-            let value = *self.expr()?;
+        if self.matches_1(Op(Eq)) {
+            let value = self.expr()?;
             if let Stmt::Expr(expr) = expr_stmt {
                 if let Expr::Var(name) = expr {
+                    self.consume(Semicol, Error::ExpectedSemicol("expression".into()))?;
                     return Ok(Stmt::VarAssign { name, value });
                 }
             }
@@ -425,21 +518,72 @@ impl<'a> Parser<'a> {
             return Err(Error::InvalidAssignment);
         }
 
+        self.consume(Semicol, Error::ExpectedSemicol("expression".into()))?;
+
         Ok(expr_stmt)
     }
 
-    pub fn expr(&mut self) -> Result<Box<Expr>> {
-        let _dobj = DbgObj::new("EXPR");
-        self.eq()
+    fn block_stmt(&mut self) -> Result<Vec<Stmt>> {
+        let _dobj = DbgObj::new("BLOCK STMT");
+        let mut stmts = Vec::new();
+
+        self.consume(OpenBrace, Error::ExpectedOpenBrace)?;
+
+        while !self.matches_1(ClosedBrace) {
+            let stmt = self.stmt()?;
+            stmts.push(stmt);
+        }
+
+        match self.prev_kind() {
+            Some(prev) => {
+                if prev != ClosedBrace {
+                    return Err(Error::ExpectedClosedBrace);
+                }
+            }
+            None => return Err(Error::ExpectedClosedBrace),
+        }
+
+        Ok(stmts)
+    }
+
+    fn if_stmt(&mut self) -> Result<Stmt> {
+        let _dobj = DbgObj::new("IF");
+
+        let cond = self.expr()?;
+
+        let then = self.block_stmt()?;
+
+        let otherwise = if self.matches_1(Kw(Else)) {
+            Some(self.block_stmt()?)
+        } else {
+            None
+        };
+
+        Ok(Stmt::If {
+            cond,
+            then,
+            otherwise,
+        })
+    }
+
+    fn while_stmt(&mut self) -> Result<Stmt> {
+        let _dobj = DbgObj::new("WHILE");
+
+        let cond = self.expr()?;
+
+        let actions = self.block_stmt()?;
+
+        Ok(Stmt::While { cond, actions })
     }
 
     pub fn print(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("PRINT");
         let expr = self.expr()?;
-        Ok(Stmt::Print(*expr))
+        self.consume(Semicol, Error::ExpectedSemicol("expression".into()))?;
+        Ok(Stmt::Print(expr))
     }
 
-    // Handles variable declarations.
+    /// Handles variable declarations.
     ///
     /// # Examples
     /// - `var a = 1;`
@@ -447,11 +591,7 @@ impl<'a> Parser<'a> {
         let _dobj = DbgObj::new("VAR DECL");
 
         let ident_token = self.consume(TokenKind::Ident("".to_string()), Error::ExpectedIdent)?;
-        let initializer = self
-            .matches_1(Operator(Operator::Eq))
-            .then(|| self.expr())
-            .transpose()?
-            .map(|x| *x);
+        let initializer = self.matches_1(Op(Eq)).then(|| self.expr()).transpose()?;
         let stmt = Stmt::VarDecl {
             name: ident_token.meta,
             initializer,
@@ -473,10 +613,13 @@ impl<'a> Parser<'a> {
 
         let stmt = if self.matches_1(Kw(Keyword::Print)) {
             self.print()
+        } else if self.matches_1(Kw(Keyword::If)) {
+            self.if_stmt()
+        } else if self.matches_1(Kw(Keyword::While)) {
+            self.while_stmt()
         } else {
-            self.assign_statement()
+            self.assign_stmt()
         }?;
-        self.consume(Semicol, Error::ExpectedSemicol("expression".into()))?;
         Ok(stmt)
     }
 
