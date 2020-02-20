@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::ops::*;
 use std::result;
+use self::Number::*;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(display = "Runtime error.")]
@@ -22,10 +23,25 @@ pub enum Error {
 
 pub type Result<R> = result::Result<R, Error>;
 
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum Number {
+    Int(i64),
+    Float(f64),
+}
+
+impl Display for Number {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Number::Int(n) => n.fmt(f),
+            Number::Float(n) => n.fmt(f),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
-    Num(f64),
+    Num(Number),
     Str(String),
     Bool(bool),
 }
@@ -41,12 +57,40 @@ impl Display for Value {
     }
 }
 
+impl Add<Number> for Number {
+    type Output = Option<Number>;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Int(a), Int(b)) => Some(Int(a + b)),
+            (Float(a), Float(b)) => Some(Float(a + b)),
+            (Float(a), Int(b)) => Some(Float(a + b as f64)),
+            (Int(a), Float(b)) => Some(Float(a as f64 + b)),
+            _ => None,
+        }
+    }
+}
+
 impl Add<Value> for Value {
     type Output = Option<Value>;
 
-    fn add(self, rhs: Value) -> Self::Output {
+    fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Num(a), Num(b)) => Some(Num(a + b)),
+            (Num(a), Num(b)) => (a + b).map(Num),
+            _ => None,
+        }
+    }
+}
+
+impl Sub<Number> for Number {
+    type Output = Option<Number>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Int(a), Int(b)) => Some(Int(a - b)),
+            (Float(a), Float(b)) => Some(Float(a - b)),
+            (Float(a), Int(b)) => Some(Float(a - b as f64)),
+            (Int(a), Float(b)) => Some(Float(a as f64 - b)),
             _ => None,
         }
     }
@@ -55,9 +99,23 @@ impl Add<Value> for Value {
 impl Sub<Value> for Value {
     type Output = Option<Value>;
 
-    fn sub(self, rhs: Value) -> Self::Output {
+    fn sub(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Num(a), Num(b)) => Some(Num(a - b)),
+            (Num(a), Num(b)) => (a - b).map(Num),
+            _ => None,
+        }
+    }
+}
+
+impl Mul<Number> for Number {
+    type Output = Option<Number>;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Int(a), Int(b)) => Some(Int(a * b)),
+            (Float(a), Float(b)) => Some(Float(a * b)),
+            (Float(a), Int(b)) => Some(Float(a * b as f64)),
+            (Int(a), Float(b)) => Some(Float(a as f64 * b)),
             _ => None,
         }
     }
@@ -66,9 +124,47 @@ impl Sub<Value> for Value {
 impl Mul<Value> for Value {
     type Output = Option<Value>;
 
-    fn mul(self, rhs: Value) -> Self::Output {
+    fn mul(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Num(a), Num(b)) => Some(Num(a * b)),
+            (Num(a), Num(b)) => (a * b).map(Num),
+            _ => None,
+        }
+    }
+}
+
+impl Div<Number> for Number {
+    type Output = Option<Number>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Int(a), Int(b)) => {
+                if b == 0 {
+                    return None;
+                }
+
+                Some(Int(a / b))
+            },
+            (Float(a), Float(b)) => {
+                if b == 0.0 {
+                    return None;
+                }
+
+                Some(Float(a / b))
+            },
+            (Float(a), Int(b)) => {
+                if b == 0 {
+                    return None;
+                }
+
+                Some(Float(a / b as f64))
+            },
+            (Int(a), Float(b)) => {
+                if b == 0.0 {
+                    return None;
+                }
+
+                Some(Float(a as f64 / b))
+            },
             _ => None,
         }
     }
@@ -77,13 +173,10 @@ impl Mul<Value> for Value {
 impl Div<Value> for Value {
     type Output = Option<Value>;
 
-    fn div(self, rhs: Value) -> Self::Output {
+    fn div(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Num(a), Num(b)) => {
-                if b == 0.0 {
-                    return None;
-                }
-                Some(Num(a / b))
+                (a / b).map(Num)
             }
             _ => None,
         }
@@ -220,7 +313,7 @@ impl Interpreter {
             Expr::Unary { op, right } => {
                 let r = self.eval(*right)?;
                 match op {
-                    Operator::Sub => Value::from(Literal::Num(-1.0)) * r,
+                    Operator::Sub => Value::from(Literal::Num(Int(-1))) * r,
                     Operator::Not => !r,
                     _ => None,
                 }

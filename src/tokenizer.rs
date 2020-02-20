@@ -8,6 +8,8 @@ use std::fmt::{self, Display, Formatter, Write};
 use std::iter::Peekable;
 use std::result;
 use std::str::Chars;
+use crate::interpreter::Number;
+use crate::interpreter::Number::Float;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(display = "Tokenizer error.")]
@@ -63,7 +65,7 @@ impl Display for Operator {
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum Literal {
-    Num(f64),
+    Num(Number),
     Str(String),
     Bool(bool),
 }
@@ -435,7 +437,7 @@ impl<'a> Tokenizer<'a> {
         self.eat_while(|x| x.is_digit(10));
         let string = self.curr_lexeme();
         Ok(Literal::Num(
-            string.parse().map_err(|_| Error::InvalidFloat)?,
+            Float(string.parse().map_err(|_| Error::InvalidFloat)?),
         ))
     }
 
