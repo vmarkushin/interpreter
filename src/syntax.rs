@@ -1,6 +1,7 @@
-use crate::tokenizer::Keyword::Else;
 use crate::tokenizer::{
-    Error as TokError, Keyword, Literal,
+    Error as TokError,
+    Keyword::*,
+    Literal,
     Operator::{self, *},
     Result as TokResult, Token, TokenKind,
     TokenKind::*,
@@ -301,13 +302,13 @@ impl<'a> Parser<'a> {
     fn primary(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("PRIMARY");
 
-        if self.matches_1(Kw(Keyword::True)) {
+        if self.matches_1(Kw(True)) {
             return Ok(Expr::Literal {
                 lit: Literal::Bool(true),
             });
         }
 
-        if self.matches_1(Kw(Keyword::False)) {
+        if self.matches_1(Kw(False)) {
             return Ok(Expr::Literal {
                 lit: Literal::Bool(false),
             });
@@ -347,14 +348,14 @@ impl<'a> Parser<'a> {
             #[allow(clippy::single_match)]
             match *t {
                 TokenKind::Op(op) => match op {
-                    Sub => (),
+                    Minus => (),
                     _ => return Err(Error::ExpectedExpression(format!("{}", op))),
                 },
                 _ => (),
             }
         }
 
-        if self.matches_2(Op(Not), Op(Sub)) {
+        if self.matches_2(Op(ExMark), Op(Minus)) {
             let op = self
                 .prev_kind()
                 .unwrap()
@@ -371,7 +372,7 @@ impl<'a> Parser<'a> {
         let _dobj = DbgObj::new("MUL");
 
         let mut expr = self.unary()?;
-        while self.matches_2(Op(Mul), Op(Div)) {
+        while self.matches_2(Op(Star), Op(Slash)) {
             let op = self
                 .prev_kind()
                 .expect("expected token")
@@ -392,7 +393,7 @@ impl<'a> Parser<'a> {
         let _dobj = DbgObj::new("ADD");
 
         let mut expr = self.mul_div()?;
-        while self.matches_2(Op(Sub), Op(Add)) {
+        while self.matches_2(Op(Minus), Op(Plus)) {
             let op = self
                 .prev_kind()
                 .expect("expected token")
@@ -611,11 +612,11 @@ impl<'a> Parser<'a> {
     pub fn stmt(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("STMT");
 
-        let stmt = if self.matches_1(Kw(Keyword::Print)) {
+        let stmt = if self.matches_1(Kw(Print)) {
             self.print()
-        } else if self.matches_1(Kw(Keyword::If)) {
+        } else if self.matches_1(Kw(If)) {
             self.if_stmt()
-        } else if self.matches_1(Kw(Keyword::While)) {
+        } else if self.matches_1(Kw(While)) {
             self.while_stmt()
         } else {
             self.assign_stmt()
@@ -626,7 +627,7 @@ impl<'a> Parser<'a> {
     /// Handles declarations (variable declarations and statements).
     pub fn decl(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("DECL");
-        if self.matches_1(Kw(Keyword::Var)) {
+        if self.matches_1(Kw(Var)) {
             self.var_decl()
         } else {
             self.stmt()
@@ -664,8 +665,7 @@ impl<'a> Parser<'a> {
                 Ok(opt) => {
                     if let Some(t) = opt {
                         match t {
-                            Kw(Keyword::Var) | Kw(Keyword::If) | Kw(Keyword::Loop)
-                            | Kw(Keyword::Ret) | Kw(Keyword::Print) => return,
+                            Kw(Var) | Kw(If) | Kw(Loop) | Kw(Ret) | Kw(Print) => return,
                             _ => (),
                         }
                     }

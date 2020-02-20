@@ -45,10 +45,9 @@ fn main() {
         print "Off blast!";
     "#;
     let mut prog = args()
-        .skip(1)
-        .next()
+        .nth(2)
         .map(|file| read_to_string(Path::new(&file)).expect("invalid file"))
-        .unwrap_or(default_prog.to_owned());
+        .unwrap_or_else(|| default_prog.to_owned());
 
     // REPL mode
     let stdin = std::io::stdin();
