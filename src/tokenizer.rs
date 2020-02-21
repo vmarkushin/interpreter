@@ -1,5 +1,7 @@
 use self::Operator::*;
 use self::TokenKind::*;
+use crate::interpreter::Number;
+use crate::interpreter::Number::*;
 use lazy_static::lazy_static;
 use log::debug;
 use log::error;
@@ -9,8 +11,6 @@ use std::fmt::{self, Display, Formatter, Write};
 use std::iter::Peekable;
 use std::result;
 use std::str::Chars;
-use crate::interpreter::Number;
-use crate::interpreter::Number::Float;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(display = "Tokenizer error.")]
@@ -19,8 +19,10 @@ pub enum Error {
     UnexpectedNewLineInStr,
     #[error(display = "unterminated string")]
     UnterminatedStr,
-    #[error(display = "unexpected new line in string")]
+    #[error(display = "invalid float number")]
     InvalidFloat,
+    #[error(display = "invalid int number")]
+    InvalidInt,
 }
 
 pub type Result<R> = result::Result<R, Error>;
@@ -304,10 +306,14 @@ impl<'a> Tokenizer<'a> {
                 // Identifier
                 c if is_id_start(c) => self.ident(),
 
-                // TODO: parse floats
                 // Numeric literal
                 _c @ '0'..='9' => {
                     let literal_kind = self.number()?;
+                    Lit(literal_kind)
+                }
+
+                '.' => {
+                    let literal_kind = self.float()?;
                     Lit(literal_kind)
                 }
 
@@ -470,10 +476,22 @@ impl<'a> Tokenizer<'a> {
 
     fn number(&mut self) -> Result<Literal> {
         self.eat_while(|x| x.is_digit(10));
+        if self.matches_eat('.') {
+            self.float()
+        } else {
+            let string = self.curr_lexeme();
+            Ok(Literal::Num(Int(string
+                .parse()
+                .map_err(|_| Error::InvalidInt)?)))
+        }
+    }
+
+    fn float(&mut self) -> Result<Literal> {
+        self.eat_while(|x| x.is_digit(10));
         let string = self.curr_lexeme();
-        Ok(Literal::Num(
-            Float(string.parse().map_err(|_| Error::InvalidFloat)?),
-        ))
+        Ok(Literal::Num(Float(
+            string.parse().map_err(|_| Error::InvalidFloat)?,
+        )))
     }
 
     fn string(&mut self) -> Result<TokenKind> {
@@ -551,13 +569,13 @@ fn expr_formatting_test() -> fmt::Result {
         left: box Expr::Unary {
             op: Minus,
             right: box Expr::Literal {
-                lit: Literal::Num(1.0),
+                lit: Literal::Num(Float(1.0)),
             },
         },
         op: EqEq,
         right: box Expr::Grouping {
             expr: box Expr::Literal {
-                lit: Literal::Num(2.3),
+                lit: Literal::Num(Float(2.3)),
             },
         },
     };
@@ -572,6 +590,7 @@ fn expr_formatting_test() -> fmt::Result {
 fn test_tokenizer_kinds() -> fmt::Result {
     use self::Keyword::*;
     use self::Literal::*;
+    use self::Number::*;
     use self::Operator::*;
     use self::TokenKind::*;
 
@@ -609,7 +628,28 @@ fn test_tokenizer_kinds() -> fmt::Result {
         .map(Result::unwrap)
         .map(Token::into_kind)
         .collect();
-    assert_eq!(ts.as_slice(), &[Lit(Num(1.0))][..]);
+    assert_eq!(ts.as_slice(), &[Lit(Num(Int(1)))][..]);
+
+    let ts: Vec<_> = tokenize("1.0")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
+    assert_eq!(ts.as_slice(), &[Lit(Num(Float(1.0)))][..]);
+
+    let ts: Vec<_> = tokenize(".0")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
+    assert_eq!(ts.as_slice(), &[Lit(Num(Float(0.0)))][..]);
+
+    let ts: Vec<_> = tokenize("1.")
+        .map(Result::unwrap)
+        .map(Token::into_kind)
+        .collect();
+    assert_eq!(ts.as_slice(), &[Lit(Num(Float(1.0)))][..]);
+
+    let ts: Vec<_> = tokenize(".").map(Result::unwrap_err).collect();
+    assert_eq!(ts.as_slice(), &[Error::InvalidFloat][..]);
 
     let ts: Vec<_> = tokenize(r#""hello""#)
         .map(Result::unwrap)
@@ -653,10 +693,10 @@ fn test_tokenizer_kinds() -> fmt::Result {
             OpenBrace,
             Ident("b".to_string()),
             Op(Eq),
-            Lit(Num(3.0)),
+            Lit(Num(Int(3))),
             Op(Star),
             Op(Minus),
-            Lit(Num(2.0)),
+            Lit(Num(Int(2))),
             Semicol,
             ClosedBrace,
         ][..]

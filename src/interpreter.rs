@@ -68,7 +68,6 @@ impl Add<Number> for Number {
             (Float(a), Float(b)) => Some(Float(a + b)),
             (Float(a), Int(b)) => Some(Float(a + b as f64)),
             (Int(a), Float(b)) => Some(Float(a as f64 + b)),
-            _ => None,
         }
     }
 }
@@ -96,7 +95,6 @@ impl Sub<Number> for Number {
             (Float(a), Float(b)) => Some(Float(a - b)),
             (Float(a), Int(b)) => Some(Float(a - b as f64)),
             (Int(a), Float(b)) => Some(Float(a as f64 - b)),
-            _ => None,
         }
     }
 }
@@ -121,7 +119,6 @@ impl Mul<Number> for Number {
             (Float(a), Float(b)) => Some(Float(a * b)),
             (Float(a), Int(b)) => Some(Float(a * b as f64)),
             (Int(a), Float(b)) => Some(Float(a as f64 * b)),
-            _ => None,
         }
     }
 }
@@ -170,7 +167,6 @@ impl Div<Number> for Number {
 
                 Some(Float(a as f64 / b))
             },
-            _ => None,
         }
     }
 }
@@ -400,7 +396,8 @@ impl Interpreter {
                 let s = s.trim().to_owned();
                 let val = match old_val {
                     Null => Value::Str(s),
-                    Num(_) => dbg!(s.parse::<f64>().map(Value::Num).unwrap_or(Value::Str(s))),
+                    Num(Float(_)) => dbg!(s.parse::<f64>().map(|x| Value::Num(Float(x))).unwrap_or(Value::Str(s))),
+                    Num(Int(_)) => dbg!(s.parse::<i64>().map(|x| Value::Num(Int(x))).unwrap_or(Value::Str(s))),
                     Str(_) => Value::Str(s),
                     Bool(_) => s.parse::<bool>().map(Value::Bool).unwrap_or(Value::Str(s)),
                 };
@@ -467,7 +464,8 @@ impl Interpreter {
 
 mod tests {
     use super::Value::*;
-    use super::{Error, Interpreter, Value};
+    use super::Number::*;
+    use super::{Error, Interpreter};
 
     #[test]
     pub fn test_vars() -> Result<(), crate::Error> {
@@ -477,17 +475,17 @@ mod tests {
         let program = "var a = 1;";
         let stmts = parse(&program).unwrap();
         interpreter.interpret(&stmts)?;
-        assert_eq!(interpreter.env.vars.get("a").unwrap(), &Num(1.0));
+        assert_eq!(interpreter.env.vars.get("a").unwrap(), &Num(Int(1)));
 
         let program = "a = 2;";
         let stmts = parse(&program).unwrap();
         interpreter.interpret(&stmts)?;
-        assert_eq!(interpreter.env.vars.get("a").unwrap(), &Num(2.0));
+        assert_eq!(interpreter.env.vars.get("a").unwrap(), &Num(Int(2)));
 
         let program = "var a = 0;";
         let stmts = parse(&program).unwrap();
         interpreter.interpret(&stmts)?;
-        assert_eq!(interpreter.env.vars.get("a").unwrap(), &Num(0.0));
+        assert_eq!(interpreter.env.vars.get("a").unwrap(), &Num(Int(0)));
 
         let program = "b = 0;";
         let stmts = parse(&program).unwrap();
@@ -527,32 +525,37 @@ mod tests {
         let mut expr = "1 - 2 * 3;";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();
         let res = interpreter.eval(&expr)?;
-        assert_eq!(res, Num(-5.0));
+        assert_eq!(res, Num(Int(-5)));
+
+        let mut expr = "1 - 2 * 3.0;";
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Num(Float(-5.0)));
 
         let mut expr = "-2;";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();
         let res = interpreter.eval(&expr)?;
-        assert_eq!(res, Num(-2.0));
+        assert_eq!(res, Num(Int(-2)));
 
         let mut expr = "-2 * 3;";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();
         let res = interpreter.eval(&expr)?;
-        assert_eq!(res, Num(-6.0));
+        assert_eq!(res, Num(Int(-6)));
 
         let mut expr = "(( (1) - (2) * (3) ));";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();
         let res = interpreter.eval(&expr)?;
-        assert_eq!(res, Num(-5.0));
+        assert_eq!(res, Num(Int(-5)));
 
         let mut expr = "1 - (2 * 3);";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();
         let res = interpreter.eval(&expr)?;
-        assert_eq!(res, Num(-5.0));
+        assert_eq!(res, Num(Int(-5)));
 
         let mut expr = "(1 - 2) * 3;";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();
         let res = interpreter.eval(&expr)?;
-        assert_eq!(res, Num(-3.0));
+        assert_eq!(res, Num(Int(-3)));
 
         let mut expr = "1 - (2 * 3) < 4;";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();
