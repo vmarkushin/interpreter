@@ -26,11 +26,11 @@ fn main() {
     let mut interpreter = Interpreter::new();
 
     let default_prog = r#"
-        var a = 1336;
+        var a = 10;
         var b = 1;
         print b + a;
 
-        if b == 1 && a == 1337 - 1 {
+        if b == 1 && a == 11 - 1 {
             print "yes!";
         } else {
             print "no...";

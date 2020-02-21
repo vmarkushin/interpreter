@@ -297,7 +297,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn matches_1(&mut self, t0: TokenKind) -> bool {
+    fn matches(&mut self, t0: TokenKind) -> bool {
         self.matches_any(&[t0])
     }
 
@@ -308,25 +308,21 @@ impl<'a> Parser<'a> {
     fn primary(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("PRIMARY");
 
-        if self.matches_1(Kw(True)) {
+        if self.matches(Kw(True)) {
             return Ok(Expr::Literal {
                 lit: Literal::Bool(true),
             });
         }
 
-        if self.matches_1(Kw(False)) {
+        if self.matches(Kw(False)) {
             return Ok(Expr::Literal {
                 lit: Literal::Bool(false),
             });
         }
 
-        #[allow(clippy::single_match)]
-        match self.curr_kind() {
-            Some(Lit(lit)) => {
-                self.advance();
-                return Ok(Expr::Literal { lit });
-            }
-            _ => {}
+        if let Some(Lit(lit)) = self.curr_kind() {
+            self.advance();
+            return Ok(Expr::Literal { lit });
         }
 
         if let Some(Ident(_)) = self.curr_kind() {
@@ -335,7 +331,7 @@ impl<'a> Parser<'a> {
             return Ok(var_expr);
         }
 
-        if self.matches_1(OpenParen) {
+        if self.matches(OpenParen) {
             let expr = box self.expr()?;
             self.consume(ClosedParen, Error::ExpectedClosedParen)?;
             Ok(Expr::Grouping { expr })
@@ -350,14 +346,10 @@ impl<'a> Parser<'a> {
     fn unary(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("UNARY");
 
-        if let Some(t) = &self.curr_kind() {
-            #[allow(clippy::single_match)]
-            match *t {
-                TokenKind::Op(op) => match op {
-                    Minus => (),
-                    _ => return Err(Error::ExpectedExpression(format!("{}", op))),
-                },
-                _ => (),
+        if let Some(TokenKind::Op(op)) = &self.curr_kind() {
+            match op {
+                Minus => (),
+                _ => return Err(Error::ExpectedExpression(format!("{}", op))),
             }
         }
 
@@ -464,7 +456,7 @@ impl<'a> Parser<'a> {
 
         let mut expr = self.eq()?;
 
-        while self.matches_1(Op(And)) {
+        while self.matches(Op(And)) {
             let right = box self.eq()?;
             expr = Expr::Binary {
                 left: box expr,
@@ -481,7 +473,7 @@ impl<'a> Parser<'a> {
 
         let mut expr = self.and()?;
 
-        while self.matches_1(Op(Or)) {
+        while self.matches(Op(Or)) {
             let right = box self.and()?;
             expr = Expr::Binary {
                 left: box expr,
@@ -513,7 +505,7 @@ impl<'a> Parser<'a> {
 
         let expr_stmt = self.expr_statement()?;
 
-        if self.matches_1(Op(Eq)) {
+        if self.matches(Op(Eq)) {
             let value = self.expr()?;
             if let Stmt::Expr(expr) = expr_stmt {
                 if let Expr::Var(name) = expr {
@@ -536,7 +528,7 @@ impl<'a> Parser<'a> {
 
         self.consume(OpenBrace, Error::ExpectedOpenBrace)?;
 
-        while !self.matches_1(ClosedBrace) {
+        while !self.matches(ClosedBrace) {
             let stmt = self.stmt()?;
             stmts.push(stmt);
         }
@@ -560,7 +552,7 @@ impl<'a> Parser<'a> {
 
         let then = self.block_stmt()?;
 
-        let otherwise = if self.matches_1(Kw(Else)) {
+        let otherwise = if self.matches(Kw(Else)) {
             Some(self.block_stmt()?)
         } else {
             None
@@ -577,7 +569,6 @@ impl<'a> Parser<'a> {
         let _dobj = DbgObj::new("WHILE");
 
         let cond = self.expr()?;
-
         let actions = self.block_stmt()?;
 
         Ok(Stmt::While { cond, actions })
@@ -611,7 +602,7 @@ impl<'a> Parser<'a> {
         let _dobj = DbgObj::new("VAR DECL");
 
         let ident_token = self.consume(TokenKind::Ident("".to_string()), Error::ExpectedIdent)?;
-        let initializer = self.matches_1(Op(Eq)).then(|| self.expr()).transpose()?;
+        let initializer = self.matches(Op(Eq)).then(|| self.expr()).transpose()?;
         let stmt = Stmt::VarDecl {
             name: ident_token.meta,
             initializer,
@@ -631,13 +622,13 @@ impl<'a> Parser<'a> {
     pub fn stmt(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("STMT");
 
-        let stmt = if self.matches_1(Kw(Print)) {
+        let stmt = if self.matches(Kw(Print)) {
             self.print()
-        } else if self.matches_1(Kw(Read)) {
+        } else if self.matches(Kw(Read)) {
             self.read()
-        } else if self.matches_1(Kw(If)) {
+        } else if self.matches(Kw(If)) {
             self.if_stmt()
-        } else if self.matches_1(Kw(While)) {
+        } else if self.matches(Kw(While)) {
             self.while_stmt()
         } else {
             self.assign_stmt()
@@ -648,7 +639,7 @@ impl<'a> Parser<'a> {
     /// Handles declarations (variable declarations and statements).
     pub fn decl(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("DECL");
-        if self.matches_1(Kw(Var)) {
+        if self.matches(Kw(Var)) {
             self.var_decl()
         } else {
             self.stmt()
@@ -686,7 +677,7 @@ impl<'a> Parser<'a> {
                 Ok(opt) => {
                     if let Some(t) = opt {
                         match t {
-                            Kw(Var) | Kw(If) | Kw(Loop) | Kw(Ret) | Kw(Print) => return,
+                            Kw(Var) | Kw(If) | Kw(While) | Kw(Loop) | Kw(Ret) | Kw(Print) | Kw(Read) => return,
                             _ => (),
                         }
                     }
