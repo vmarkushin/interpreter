@@ -396,8 +396,8 @@ impl Interpreter {
                 let s = s.trim().to_owned();
                 let val = match old_val {
                     Null => Value::Str(s),
-                    Num(Float(_)) => dbg!(s.parse::<f64>().map(|x| Value::Num(Float(x))).unwrap_or(Value::Str(s))),
-                    Num(Int(_)) => dbg!(s.parse::<i64>().map(|x| Value::Num(Int(x))).unwrap_or(Value::Str(s))),
+                    Num(Float(_)) => s.parse::<f64>().map(|x| Value::Num(Float(x))).unwrap_or(Value::Str(s)),
+                    Num(Int(_)) => s.parse::<i64>().map(|x| Value::Num(Int(x))).unwrap_or(Value::Str(s)),
                     Str(_) => Value::Str(s),
                     Bool(_) => s.parse::<bool>().map(Value::Bool).unwrap_or(Value::Str(s)),
                 };
