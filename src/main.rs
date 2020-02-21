@@ -43,6 +43,15 @@ fn main() {
         }
 
         print "Off blast!";
+
+        var a = 1;
+        print a > 2;
+        print "enter a: ";
+        read a;
+        print a > 2;
+        print "enter a: ";
+        read a;
+        print a > 2;
     "#;
     let mut prog = args()
         .nth(2)

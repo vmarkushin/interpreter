@@ -49,6 +49,7 @@ pub type Result<R> = result::Result<R, Error>;
 pub enum Stmt {
     Expr(Expr),
     Print(Expr),
+    Read(TokenMeta),
     VarDecl {
         name: TokenMeta,
         initializer: Option<Expr>,
@@ -85,6 +86,11 @@ impl Display for Stmt {
             Stmt::Print(e) => {
                 f.write_str("(print ")?;
                 e.fmt(f)?;
+                f.write_str(")")
+            }
+            Stmt::Read(meta) => {
+                f.write_str("(read ")?;
+                f.write_str(&meta.lexeme)?;
                 f.write_str(")")
             }
             Stmt::VarDecl { name, initializer } => {
@@ -577,11 +583,24 @@ impl<'a> Parser<'a> {
         Ok(Stmt::While { cond, actions })
     }
 
-    pub fn print(&mut self) -> Result<Stmt> {
+    fn print(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("PRINT");
         let expr = self.expr()?;
         self.consume(Semicol, Error::ExpectedSemicol("expression".into()))?;
         Ok(Stmt::Print(expr))
+    }
+
+    fn read(&mut self) -> Result<Stmt> {
+        let _dobj = DbgObj::new("READ");
+
+        if let Some(Ident(_)) = self.curr_kind() {
+            let stmt = Stmt::Read(self.curr_meta().unwrap());
+            self.advance();
+            self.consume(Semicol, Error::ExpectedSemicol("variable".into()))?;
+            Ok(stmt)
+        } else {
+            Err(Error::ExpectedIdent)
+        }
     }
 
     /// Handles variable declarations.
@@ -614,6 +633,8 @@ impl<'a> Parser<'a> {
 
         let stmt = if self.matches_1(Kw(Print)) {
             self.print()
+        } else if self.matches_1(Kw(Read)) {
+            self.read()
         } else if self.matches_1(Kw(If)) {
             self.if_stmt()
         } else if self.matches_1(Kw(While)) {

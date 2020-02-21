@@ -1,6 +1,5 @@
 use self::Operator::*;
 use self::TokenKind::*;
-use self::TokenKind::*;
 use lazy_static::lazy_static;
 use log::debug;
 use log::error;
@@ -226,6 +225,7 @@ lazy_static! {
         m.insert("var", Keyword::Var);
         m.insert("ret", Keyword::Ret);
         m.insert("print", Keyword::Print);
+        m.insert("read", Keyword::Read);
         m.insert("true", Keyword::True);
         m.insert("false", Keyword::False);
         m
@@ -242,6 +242,7 @@ pub enum Keyword {
     Var,
     Ret,
     Print,
+    Read,
     True,
     False,
 }
@@ -257,6 +258,7 @@ impl Display for Keyword {
             Self::Var => f.write_str("var"),
             Self::Ret => f.write_str("ret"),
             Self::Print => f.write_str("print"),
+            Self::Read => f.write_str("read"),
             Self::True => f.write_str("true"),
             Self::False => f.write_str("false"),
         }

@@ -294,6 +294,25 @@ impl Interpreter {
                 let val = self.eval(e)?;
                 println!("{}", val);
             }
+            Stmt::Read(meta) => {
+                let var_name = &meta.lexeme;
+                let old_val = self
+                    .env
+                    .get(var_name)
+                    .ok_or_else(|| Error::UndefinedVar(var_name.clone()))?;
+                let mut s = String::new();
+                std::io::stdin()
+                    .read_line(&mut s)
+                    .expect("can't read from stdin");
+                let s = s.trim().to_owned();
+                let val = match old_val {
+                    Null => Value::Str(s),
+                    Num(_) => dbg!(s.parse::<f64>().map(Value::Num).unwrap_or(Value::Str(s))),
+                    Str(_) => Value::Str(s),
+                    Bool(_) => s.parse::<bool>().map(Value::Bool).unwrap_or(Value::Str(s)),
+                };
+                self.env.assign(var_name, val)?;
+            }
             Stmt::VarDecl { name, initializer } => {
                 let val = if let Some(init) = initializer {
                     self.eval(init)?
