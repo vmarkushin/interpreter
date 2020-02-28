@@ -551,11 +551,10 @@ mod tests {
 
         let mut interpreter = Interpreter::new();
 
-        // TODO: expressions, starting operator
-        // let mut expr = "true == !false";
-        // let mut expr = parse(&mut expr)?.pop().unwrap().into_expr();
-        // let res = interpreter.eval(&expr)?;
-        // assert_eq!(res, Bool(true));
+        let mut expr = "true == !false;";
+        let mut expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&expr)?;
+        assert_eq!(res, Bool(true));
 
         let mut expr = "1 - 2 * 3;";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();
@@ -672,12 +671,10 @@ mod tests {
         let res = interpreter.eval(&expr)?;
         assert_eq!(res, Bool(false));
 
-        // TODO: expressions, starting with operator
-
-        //    let mut expr = "!(1 - (2 * 3) < 4)";
-        //    let mut exprs = parse(&mut expr)?.pop().unwrap().into_expr();
-        //    let res = interpreter.eval(exprs)?;
-        //    assert_eq!(res, Bool(false));
+       let mut expr = "!(1 - (2 * 3) < 4);";
+       let mut exprs = parse(&mut expr)?.pop().unwrap().into_expr();
+       let res = interpreter.eval(&exprs)?;
+       assert_eq!(res, Bool(false));
 
         let mut expr = "1 - (2 * 3) < 4 != false;";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();
