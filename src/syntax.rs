@@ -1,3 +1,47 @@
+//! Syntax analyzer.
+//!
+//! Provides functionality for building AST (abstract syntax tree).
+//!
+//! Syntax grammar:
+//! ```
+//! <prog>: <decl>*
+//!
+//! <decl>: 'var' IDENT '=' <expr> ';'
+//!       | <stmt>
+//!
+//! <stmt>: 'print' <expr> ';'
+//!       | 'read' <expr> ';'
+//!       | 'if' <expr> <block> ('else' <block>)?
+//!       | 'while' <expr> <block>
+//!       | <assign>
+//!
+//! <block>: '{' <stmt>* '}'
+//!
+//! <assign>: IDENT '=' <expr> ';'
+//!         | <expr> ';'
+//!
+//! <expr>: <or>
+//!
+//! <or>: <and> ('||' <and>)*
+//!
+//! <and>: <eq> ('&&' <eq>)*
+//!
+//! <eq>: <comp> (('=='|'!=') <comp>)*
+//!
+//! <comp>: <sum> (('<'|'>'|'>='|'<=') <sum>)*
+//!
+//! <sum>: <prod> (('-'|'+') <prod>)*
+//!
+//! <prod>: <unary> (('/'|'*') <unary>)*
+//!
+//! <unary>: ('!'|'-') <unary>
+//!        | <primary>
+//!
+//! <primary>: LITER
+//!          | IDENT
+//!          | '(' <expr> ')'
+//! ```
+
 use crate::tokenizer::{
     Error as TokError,
     Keyword::*,
@@ -14,25 +58,37 @@ use std::iter::Peekable;
 use std::option::NoneError;
 use std::result;
 
+/// Kind of syntax parse error.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(display = "Syntax error.")]
 pub enum Error {
+    /// Occurs when parser expected an expression, but found _something else_ (this information
+    /// is imprinted in the `String`).
     #[error(display = "expected expression, found `{}`", _0)]
     ExpectedExpression(String),
+    /// Occurs when parser expected an closed parenthesis (`)`).
     #[error(display = "expected `)`")]
     ExpectedClosedParen,
+    /// Occurs when parser expected an open brace (`{`).
     #[error(display = "expected `{{`")]
     ExpectedOpenBrace,
+    /// Occurs when parser expected an closed brace (`}`).
     #[error(display = "expected `}}`")]
     ExpectedClosedBrace,
+    /// Occurs when parser expected an semicolon (`;`).
     #[error(display = "expected `;` after {}", _0)]
     ExpectedSemicol(String),
+    /// Occurs when parser expected an identifier (e.g. `foo`).
     #[error(display = "expected identifier")]
     ExpectedIdent,
-    #[error(display = "invalid assignment")]
-    InvalidAssignment,
+    /// Occurs when parser expected an variable name, but found _something else_ (this information
+    /// is imprinted in the `String`).
+    #[error(display = "expected expression, found `{}`", _0)]
+    ExpectedVar(String),
+    /// Occurs on tokenizer error.
     #[error(display = "{}", _0)]
     TokenError(TokError),
+    /// General parser error.
     #[error(display = "parse error")]
     ParseError,
 }
@@ -45,31 +101,37 @@ impl From<NoneError> for Error {
 
 pub type Result<R> = result::Result<R, Error>;
 
+/// Statement. The most general component of the program.
 #[derive(Debug)]
 pub enum Stmt {
+    /// Expression statement.
     Expr(Expr),
+    /// Print statement.
     Print(Expr),
+    /// Read statement.
     Read(TokenMeta),
+    /// Variable declaration statement.
     VarDecl {
         name: TokenMeta,
         initializer: Option<Expr>,
     },
-    VarAssign {
-        name: TokenMeta,
-        value: Expr,
-    },
+    /// Variable assignment statement.
+    VarAssign { name: TokenMeta, value: Expr },
+    /// If condition statement.
     If {
         cond: Expr,
         then: Vec<Stmt>,
         otherwise: Option<Vec<Stmt>>,
     },
-    While {
-        cond: Expr,
-        actions: Vec<Stmt>,
-    },
+    /// While loop statement.
+    While { cond: Expr, actions: Vec<Stmt> },
 }
 
 impl Stmt {
+    /// Forces statement into an expression.
+    ///
+    /// # Panics
+    /// Panics when `self` is not an expression.
     pub fn into_expr(self) -> Expr {
         if let Stmt::Expr(e) = self {
             e
@@ -162,23 +224,39 @@ pub fn display_arr<T: Display>(arr: &[T]) {
     }
 }
 
+/// Expression. Always evaluates to [`Value`](value) and may have side effects during evaluation.
 #[derive(Debug, Clone)]
 pub enum Expr {
+    /// Binary expression.
+    ///
+    /// # Example
+    /// `a + b`
     Binary {
         left: Box<Expr>,
         op: Operator,
         right: Box<Expr>,
     },
-    Grouping {
-        expr: Box<Expr>,
-    },
-    Literal {
-        lit: Literal,
-    },
-    Unary {
-        op: Operator,
-        right: Box<Expr>,
-    },
+    /// Grouping expression.
+    ///
+    /// # Example
+    /// `(a + b) * c`
+    Grouping { expr: Box<Expr> },
+    /// Literal expression.
+    ///
+    /// # Examples
+    /// - `321`
+    /// - `"hi"`
+    Literal { lit: Literal },
+    /// Unary expression.
+    ///
+    /// # Example
+    /// - `-1`
+    /// - `!false`
+    Unary { op: Operator, right: Box<Expr> },
+    /// Variable expression. Evaluates to a value of the variable.
+    ///
+    /// # Example
+    /// - `foo`
     Var(TokenMeta),
 }
 
@@ -214,6 +292,7 @@ impl Drop for DbgObj {
     }
 }
 
+/// Syntax parser. Constructs AST from a stream of tokens.
 pub struct Parser<'a> {
     it: Peekable<Box<dyn Iterator<Item = TokResult<Token>> + 'a>>,
     prev: Option<Token>,
@@ -238,7 +317,7 @@ impl<'a> Parser<'a> {
         !self.errors.is_empty()
     }
 
-    pub fn advance(&mut self) {
+    fn advance(&mut self) {
         self.prev = self.curr.take();
         loop {
             let next = self.it.next().transpose();
@@ -252,19 +331,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn curr_kind(&self) -> Option<TokenKind> {
+    fn curr_kind(&self) -> Option<TokenKind> {
         self.curr.as_ref().map(|x| x.kind.clone())
     }
 
-    pub fn curr_meta(&self) -> Option<TokenMeta> {
+    fn curr_meta(&self) -> Option<TokenMeta> {
         self.curr.as_ref().map(|x| x.meta.clone())
     }
 
-    pub fn prev_kind(&self) -> Option<TokenKind> {
+    fn prev_kind(&self) -> Option<TokenKind> {
         self.prev.as_ref().map(|x| x.kind.clone())
     }
 
-    pub fn peek_kind(&mut self) -> Result<Option<&TokenKind>> {
+    fn peek_kind(&mut self) -> Result<Option<&TokenKind>> {
         match self.it.peek() {
             Some(Ok(x)) => Ok(Some(&x.kind)),
             Some(Err(e)) => Err(e.clone().into()),
@@ -305,6 +384,13 @@ impl<'a> Parser<'a> {
         self.matches_any(&[t0, t1])
     }
 
+    /// Handles primary expression.
+    ///
+    /// # Examples
+    /// - `4`
+    /// - `"jam"`
+    /// - `foo`
+    /// - `(...)`
     fn primary(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("PRIMARY");
 
@@ -343,12 +429,17 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Handles unary operation expression.
+    ///
+    /// # Examples
+    /// - `-a`
+    /// - `!b`
     fn unary(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("UNARY");
 
         if let Some(TokenKind::Op(op)) = &self.curr_kind() {
             match op {
-                Minus => (),
+                Minus | ExMark => (),
                 _ => return Err(Error::ExpectedExpression(format!("{}", op))),
             }
         }
@@ -366,6 +457,10 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Handles multiplication/division expression.
+    ///
+    /// # Example
+    /// `a * b`
     fn mul_div(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("MUL");
 
@@ -387,6 +482,10 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    /// Handles addition/subtraction expression.
+    ///
+    /// # Example
+    /// `a - b`
     fn add_sub(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("ADD");
 
@@ -408,6 +507,10 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    /// Handles comparison expression.
+    ///
+    /// # Example
+    /// `a > b`
     fn comp(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("COMP");
 
@@ -429,6 +532,10 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    /// Handles equality expression.
+    ///
+    /// # Example
+    /// `a == b`
     fn eq(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("EQ");
 
@@ -451,6 +558,10 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    /// Handles `and` expression.
+    ///
+    /// # Example
+    /// `a && b`
     fn and(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("AND");
 
@@ -468,6 +579,10 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    /// Handles `or` expression.
+    ///
+    /// # Example
+    /// `a || b`
     fn or(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("OR");
 
@@ -485,22 +600,30 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    pub fn expr(&mut self) -> Result<Expr> {
+    /// Handles expression.
+    ///
+    /// # Example
+    /// `2 + 3`
+    fn expr(&mut self) -> Result<Expr> {
         let _dobj = DbgObj::new("EXPR");
         self.or()
     }
 
-    pub fn expr_statement(&mut self) -> Result<Stmt> {
+    /// Handles expression statement.
+    ///
+    /// # Example
+    /// `var a = 1;`
+    fn expr_statement(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("EXPR STMT");
         let expr = self.expr()?;
         Ok(Stmt::Expr(expr))
     }
 
-    /// Handles assignments statements.
+    /// Handles assignment statement.
     ///
-    /// # Examples
-    /// - `a = 1;`
-    pub fn assign_stmt(&mut self) -> Result<Stmt> {
+    /// # Example
+    /// `a = 1;`
+    fn assign_stmt(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("ASSIGN STMT");
 
         let expr_stmt = self.expr_statement()?;
@@ -510,18 +633,27 @@ impl<'a> Parser<'a> {
             if let Stmt::Expr(expr) = expr_stmt {
                 if let Expr::Var(name) = expr {
                     self.consume(Semicol, Error::ExpectedSemicol("expression".into()))?;
-                    return Ok(Stmt::VarAssign { name, value });
+                    Ok(Stmt::VarAssign { name, value })
+                } else {
+                    Err(Error::ExpectedVar(format!("{}", expr)))
                 }
+            } else {
+                Err(Error::ExpectedExpression(format!("{}", expr_stmt)))
             }
+        } else {
+            self.consume(Semicol, Error::ExpectedSemicol("expression".into()))?;
 
-            return Err(Error::InvalidAssignment);
+            Ok(expr_stmt)
         }
-
-        self.consume(Semicol, Error::ExpectedSemicol("expression".into()))?;
-
-        Ok(expr_stmt)
     }
 
+    /// Handles block statement (block of statements).
+    ///
+    /// # Example
+    /// ```{
+    ///     var a = 2;
+    ///     a = 3;
+    /// }```
     fn block_stmt(&mut self) -> Result<Vec<Stmt>> {
         let _dobj = DbgObj::new("BLOCK STMT");
         let mut stmts = Vec::new();
@@ -545,6 +677,10 @@ impl<'a> Parser<'a> {
         Ok(stmts)
     }
 
+    /// Handles `if` statement.
+    ///
+    /// # Examples=
+    /// `if (b) { ... }`
     fn if_stmt(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("IF");
 
@@ -565,6 +701,10 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Handles `while` loop statement.
+    ///
+    /// # Example
+    /// `while (b) { ... }`
     fn while_stmt(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("WHILE");
 
@@ -574,6 +714,10 @@ impl<'a> Parser<'a> {
         Ok(Stmt::While { cond, actions })
     }
 
+    /// Handles `print` statement for writing to stdout.
+    ///
+    /// # Example
+    /// `write a;`
     fn print(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("PRINT");
         let expr = self.expr()?;
@@ -581,6 +725,10 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Print(expr))
     }
 
+    /// Handles `read` statement for reading from stdin.
+    ///
+    /// # Example
+    /// `read a;`
     fn read(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("READ");
 
@@ -596,9 +744,9 @@ impl<'a> Parser<'a> {
 
     /// Handles variable declarations.
     ///
-    /// # Examples
-    /// - `var a = 1;`
-    pub fn var_decl(&mut self) -> Result<Stmt> {
+    /// # Example
+    /// `var a = 1;`
+    fn var_decl(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("VAR DECL");
 
         let ident_token = self.consume(TokenKind::Ident("".to_string()), Error::ExpectedIdent)?;
@@ -619,7 +767,7 @@ impl<'a> Parser<'a> {
     /// # Examples
     /// - `var a = 1;`
     /// - `print a;`
-    pub fn stmt(&mut self) -> Result<Stmt> {
+    fn stmt(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("STMT");
 
         let stmt = if self.matches(Kw(Print)) {
@@ -637,7 +785,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Handles declarations (variable declarations and statements).
-    pub fn decl(&mut self) -> Result<Stmt> {
+    fn decl(&mut self) -> Result<Stmt> {
         let _dobj = DbgObj::new("DECL");
         if self.matches(Kw(Var)) {
             self.var_decl()
@@ -647,7 +795,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Handles the whole program.
-    pub fn program(&mut self) -> Vec<Stmt> {
+    fn program(&mut self) -> Vec<Stmt> {
         let _dobj = DbgObj::new("PROG");
         let mut v = vec![];
         while self.curr.is_some() {
@@ -663,7 +811,8 @@ impl<'a> Parser<'a> {
         v
     }
 
-    pub fn synchronize(&mut self) {
+    /// Tries to synchronize parser to continue parsing a program in case of an error.
+    fn synchronize(&mut self) {
         self.advance();
 
         while self.it.peek().is_some() {
@@ -677,7 +826,8 @@ impl<'a> Parser<'a> {
                 Ok(opt) => {
                     if let Some(t) = opt {
                         match t {
-                            Kw(Var) | Kw(If) | Kw(While) | Kw(Loop) | Kw(Ret) | Kw(Print) | Kw(Read) => return,
+                            Kw(Var) | Kw(If) | Kw(While) | Kw(Loop) | Kw(Ret) | Kw(Print)
+                            | Kw(Read) => return,
                             _ => (),
                         }
                     }
@@ -690,7 +840,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub fn parenthesize(name: &str, exprs: &[&Expr]) -> result::Result<String, fmt::Error> {
+pub(crate) fn parenthesize(name: &str, exprs: &[&Expr]) -> result::Result<String, fmt::Error> {
     let mut f = String::new();
     f.write_char('(')?;
     f.write_str(name)?;
@@ -715,6 +865,7 @@ impl Display for Expr {
     }
 }
 
+/// Parses the given program and returns its AST.
 pub fn parse(program: &str) -> Result<Vec<Stmt>> {
     let tokenizer = Tokenizer::new(program);
     let it = box tokenizer;

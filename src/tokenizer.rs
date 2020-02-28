@@ -1,3 +1,7 @@
+//! Tokenizer.
+//!
+//! Provides functionality for parsing program [`Token`](tokens) with help of [`Tokenizer`](tokenizer).
+
 use self::Operator::*;
 use self::TokenKind::*;
 use crate::interpreter::Number;
@@ -12,6 +16,7 @@ use std::iter::Peekable;
 use std::result;
 use std::str::Chars;
 
+/// Kind of tokenizer error.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(display = "Tokenizer error.")]
 pub enum Error {
@@ -27,21 +32,36 @@ pub enum Error {
 
 pub type Result<R> = result::Result<R, Error>;
 
+/// Operator kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord)]
 pub enum Operator {
+    /// `+`
     Plus,
+    /// `-`
     Minus,
+    /// `*`
     Star,
+    /// `/`
     Slash,
+    /// `=`
     Eq,
+    /// `!=`
     BangEq,
+    /// `!`
     ExMark,
+    /// `>`
     Gt,
+    /// `<`
     Lt,
+    /// `>=`
     GtEq,
+    /// `<=`
     LtEq,
+    /// `==`
     EqEq,
+    /// `&&`
     And,
+    /// `||`
     Or,
 }
 
@@ -66,6 +86,7 @@ impl Display for Operator {
     }
 }
 
+/// Literal kind with parsed literal value.
 #[derive(PartialEq, Clone, Debug)]
 pub enum Literal {
     Num(Number),
@@ -85,6 +106,7 @@ impl Display for Literal {
     }
 }
 
+/// Token kind.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum TokenKind {
     /// Literal
@@ -113,6 +135,7 @@ pub enum TokenKind {
     Unknown,
 }
 
+/// Token metadata. Contains token lexeme and its position in code (line and column).
 #[derive(Debug, Clone)]
 pub struct TokenMeta {
     pub lexeme: String,
@@ -120,6 +143,7 @@ pub struct TokenMeta {
     pub column: usize,
 }
 
+/// Program token.
 #[derive(Debug, Clone)]
 pub struct Token {
     pub(crate) kind: TokenKind,
@@ -236,6 +260,7 @@ lazy_static! {
     };
 }
 
+/// Keyword kind.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Keyword {
     If,
@@ -269,6 +294,7 @@ impl Display for Keyword {
     }
 }
 
+/// Program tokenizer. It is lazy, so no tokens will be parsed unless consumed.
 pub struct Tokenizer<'a> {
     input: &'a str,
     start: usize,
@@ -545,15 +571,16 @@ impl<'a> Iterator for Tokenizer<'a> {
     }
 }
 
+/// Parses the given program and returns a stream of tokens. The parser is lazy.
 pub fn tokenize(input: &str) -> impl Iterator<Item = Result<Token>> + '_ {
     Tokenizer::new(input)
 }
 
-pub fn is_id_start(c: char) -> bool {
+fn is_id_start(c: char) -> bool {
     c.is_ascii_alphabetic()
 }
 
-pub fn is_id_continue(c: char) -> bool {
+fn is_id_continue(c: char) -> bool {
     c.is_ascii_alphabetic() || c.is_digit(10)
 }
 

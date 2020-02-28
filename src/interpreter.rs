@@ -1,3 +1,8 @@
+//! Interpreter.
+//!
+//! Provides functionality for interpreting program that consists of [`Stmt`](statements) and evaluating [`Expr`](expressions).
+
+use self::Number::*;
 use self::Value::*;
 use crate::syntax::Expr;
 use crate::syntax::Stmt;
@@ -8,23 +13,31 @@ use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::ops::*;
 use std::result;
-use self::Number::*;
 
+/// Kind of interpreter error.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(display = "Runtime error.")]
 pub enum Error {
+    /// Occurs when an operation isn't defined for the given operand(s).
+    ///
+    /// # Examples
+    /// `var a = "hi" / 3; // error`
     #[error(display = "unsupported operation `{}`", _0)]
     UnsupportedOperation(String),
+    /// Occurs when a fetching variable with the given name doesn't exist in `Env`.
     #[error(display = "undefined variable `{}`", _0)]
     UndefinedVar(String),
+    /// Occurs when a fetching variable the given name is `null`.
     #[error(display = "variable `{}` is null", _0)]
     NullVar(String),
+    /// Occurs when parser expected a boolean (`Value::Bool`). Usually occurs in conditions.
     #[error(display = "expected type `bool`")]
     ExpectedBool,
 }
 
 pub type Result<R> = result::Result<R, Error>;
 
+/// Numeric type.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Number {
     Int(i64),
@@ -40,6 +53,7 @@ impl Display for Number {
     }
 }
 
+/// Runtime value and its type.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
@@ -145,28 +159,28 @@ impl Div<Number> for Number {
                 }
 
                 Some(Int(a / b))
-            },
+            }
             (Float(a), Float(b)) => {
                 if b == 0.0 {
                     return None;
                 }
 
                 Some(Float(a / b))
-            },
+            }
             (Float(a), Int(b)) => {
                 if b == 0 {
                     return None;
                 }
 
                 Some(Float(a / b as f64))
-            },
+            }
             (Int(a), Float(b)) => {
                 if b == 0.0 {
                     return None;
                 }
 
                 Some(Float(a as f64 / b))
-            },
+            }
         }
     }
 }
@@ -176,20 +190,26 @@ impl Div<Value> for Value {
 
     fn div(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Num(a), Num(b)) => {
-                (a / b).map(Num)
-            }
+            (Num(a), Num(b)) => (a / b).map(Num),
             _ => None,
         }
     }
 }
 
+/// The boolean and (`&&`) operator.
+///
+/// As there is no std trait for the corresponding operator,
+/// it is nice to have one for full generalization of interpreter operations.
 pub trait And<Rhs = Self> {
     type Output;
 
     fn and(self, rhs: Rhs) -> Self::Output;
 }
 
+/// The boolean or (`||`) operator.
+///
+/// As there is no std trait for the corresponding operator,
+/// it is nice to have one for full generalization of interpreter operations.
 pub trait Or<Rhs = Self> {
     type Output;
 
@@ -255,6 +275,7 @@ impl From<Literal> for Value {
     }
 }
 
+/// Interpreter environment. Contains runtime variable names and its corresponding types.
 #[derive(Debug, Default)]
 pub struct Env {
     vars: HashMap<String, Value>,
@@ -282,6 +303,7 @@ impl Env {
     }
 }
 
+/// Interpreter. Runs with an environment.
 #[derive(Default)]
 pub struct Interpreter {
     pub env: Env,
@@ -292,6 +314,10 @@ impl Interpreter {
         Interpreter::default()
     }
 
+    /// Tries to evaluate the given expression to a value.
+    ///
+    /// # Panics
+    /// Panics on evaluating binary expression (`Expr::Binary`) with unary operator, e.g. `2 ! 2`.
     pub fn eval(&self, expr: &Expr) -> Result<Value> {
         match expr {
             Expr::Literal { lit } => Ok(lit.clone().into()),
@@ -374,6 +400,7 @@ impl Interpreter {
         }
     }
 
+    /// Tries to execute the given statement.
     pub fn execute(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
             Stmt::Expr(e) => {
@@ -396,8 +423,14 @@ impl Interpreter {
                 let s = s.trim().to_owned();
                 let val = match old_val {
                     Null => Value::Str(s),
-                    Num(Float(_)) => s.parse::<f64>().map(|x| Value::Num(Float(x))).unwrap_or(Value::Str(s)),
-                    Num(Int(_)) => s.parse::<i64>().map(|x| Value::Num(Int(x))).unwrap_or(Value::Str(s)),
+                    Num(Float(_)) => s
+                        .parse::<f64>()
+                        .map(|x| Value::Num(Float(x)))
+                        .unwrap_or(Value::Str(s)),
+                    Num(Int(_)) => s
+                        .parse::<i64>()
+                        .map(|x| Value::Num(Int(x)))
+                        .unwrap_or(Value::Str(s)),
                     Str(_) => Value::Str(s),
                     Bool(_) => s.parse::<bool>().map(Value::Bool).unwrap_or(Value::Str(s)),
                 };
@@ -454,6 +487,8 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Tries to interpret a program (array of statements). Basically,
+    /// it is an entry point of the interpreter.
     pub fn interpret(&mut self, stmts: &[Stmt]) -> Result<()> {
         for stmt in stmts {
             self.execute(stmt)?;
@@ -463,8 +498,8 @@ impl Interpreter {
 }
 
 mod tests {
-    use super::Value::*;
     use super::Number::*;
+    use super::Value::*;
     use super::{Error, Interpreter};
 
     #[test]
