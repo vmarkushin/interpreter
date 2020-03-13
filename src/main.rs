@@ -3,6 +3,7 @@
 #[macro_use]
 extern crate err_derive;
 
+pub mod compiler;
 pub mod error;
 pub mod interpreter;
 pub mod syntax;

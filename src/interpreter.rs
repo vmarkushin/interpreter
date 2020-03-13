@@ -497,6 +497,7 @@ impl Interpreter {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::Number::*;
     use super::Value::*;
@@ -671,10 +672,10 @@ mod tests {
         let res = interpreter.eval(&expr)?;
         assert_eq!(res, Bool(false));
 
-       let mut expr = "!(1 - (2 * 3) < 4);";
-       let mut exprs = parse(&mut expr)?.pop().unwrap().into_expr();
-       let res = interpreter.eval(&exprs)?;
-       assert_eq!(res, Bool(false));
+        let mut expr = "!(1 - (2 * 3) < 4);";
+        let mut exprs = parse(&mut expr)?.pop().unwrap().into_expr();
+        let res = interpreter.eval(&exprs)?;
+        assert_eq!(res, Bool(false));
 
         let mut expr = "1 - (2 * 3) < 4 != false;";
         let expr = parse(&mut expr)?.pop().unwrap().into_expr();

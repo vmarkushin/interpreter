@@ -878,6 +878,7 @@ pub fn parse(program: &str) -> Result<Vec<Stmt>> {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::{Error, Parser};
     use crate::tokenizer::tokenize;
