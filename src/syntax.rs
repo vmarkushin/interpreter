@@ -3,7 +3,7 @@
 //! Provides functionality for building AST (abstract syntax tree).
 //!
 //! Syntax grammar:
-//! ```
+//! ```grammar
 //! <prog>: <decl>*
 //!
 //! <decl>: 'var' IDENT '=' <expr> ';'
@@ -650,7 +650,8 @@ impl<'a> Parser<'a> {
     /// Handles block statement (block of statements).
     ///
     /// # Example
-    /// ```{
+    /// ```int
+    /// {
     ///     var a = 2;
     ///     a = 3;
     /// }```

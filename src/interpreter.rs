@@ -502,6 +502,8 @@ mod tests {
     use super::Number::*;
     use super::Value::*;
     use super::{Error, Interpreter};
+    use crate::interpreter;
+    use crate::syntax;
 
     #[test]
     pub fn test_vars() -> Result<(), crate::Error> {
@@ -553,7 +555,7 @@ mod tests {
         let mut interpreter = Interpreter::new();
 
         let mut expr = "true == !false;";
-        let mut expr = parse(&mut expr)?.pop().unwrap().into_expr();
+        let expr = parse(&mut expr)?.pop().unwrap().into_expr();
         let res = interpreter.eval(&expr)?;
         assert_eq!(res, Bool(true));
 
@@ -673,7 +675,7 @@ mod tests {
         assert_eq!(res, Bool(false));
 
         let mut expr = "!(1 - (2 * 3) < 4);";
-        let mut exprs = parse(&mut expr)?.pop().unwrap().into_expr();
+        let exprs = parse(&mut expr)?.pop().unwrap().into_expr();
         let res = interpreter.eval(&exprs)?;
         assert_eq!(res, Bool(false));
 

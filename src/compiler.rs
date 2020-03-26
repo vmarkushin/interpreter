@@ -1,47 +1,15 @@
-use crate::interpreter::Number;
+//! Compiler (WIP).
+#![allow(dead_code)]
+
+use crate::interpreter::{Number, Value};
 use crate::syntax::Expr;
 use crate::tokenizer::Literal;
 use crate::tokenizer::{Operator, TokenMeta};
+use crate::vm::{Instruction, Operand, Reg, Size, Word};
+use fasthash::city::Hash64;
+use fasthash::RandomState;
+use std::collections::HashMap;
 use std::ops::Deref;
-
-type Word = i32;
-type Reg = i32;
-
-#[derive(Debug, Copy, Clone)]
-pub enum Operand {
-    Word(Word),
-    Reg(Reg),
-}
-
-impl Operand {
-    pub fn as_word(&self) -> Word {
-        match self {
-            Operand::Word(w) => *w,
-            _ => panic!(),
-        }
-    }
-
-    pub fn as_reg(&self) -> Reg {
-        match self {
-            Operand::Reg(r) => *r,
-            _ => panic!(),
-        }
-    }
-}
-
-/// An assembly opcode.
-///
-/// All the commands is presented as motorolla-like (i.e. `OP A B` is literally equal `A = A OP B`)
-#[derive(Debug)]
-pub enum Instruction {
-    LDR(Reg, Word),
-    STR(Reg, Word),
-    MOV(Reg, Operand),
-    ADD(Reg, Operand),
-    SUB(Reg, Operand),
-    MUL(Reg, Operand),
-    DIV(Reg, Operand),
-}
 
 #[derive(Debug)]
 pub struct Tree {
@@ -182,7 +150,7 @@ fn markup_registers(node: &mut Node) {
     match node {
         Node::Binary {
             left,
-            op,
+            op: _,
             right,
             data,
         } => {
@@ -199,8 +167,8 @@ fn markup_registers(node: &mut Node) {
             node.data_mut().register_number = data.register_number;
             markup_registers(node);
         }
-        Node::Literal { lit, data } => {}
-        Node::Unary { op, right, data } => {
+        Node::Literal { lit: _, data: _ } => {}
+        Node::Unary { op: _, right, data } => {
             right.data_mut().register_number = data.register_number;
             markup_registers(right);
         }
@@ -208,7 +176,7 @@ fn markup_registers(node: &mut Node) {
     };
 }
 
-fn binary_instruction(op: &Operator, reg: Reg, op1: Operand) -> Option<Instruction> {
+fn binary_instruction(op: Operator, reg: Reg, op1: Operand) -> Option<Instruction> {
     match op {
         Operator::Plus => Some(Instruction::ADD(reg, op1)),
         Operator::Minus => Some(Instruction::SUB(reg, op1)),
@@ -218,20 +186,47 @@ fn binary_instruction(op: &Operator, reg: Reg, op1: Operand) -> Option<Instructi
     }
 }
 
-struct Compiler {
+pub enum DataType {
+    Byte,
+    Word,
+    DoubleWord,
+    Number,
+    Near,
+    Far,
+}
+
+enum SegmentKind {
+    Data,
+    Text,
+    Undefined,
+}
+
+struct Segment {
+    name: String,
+    offset: Size,
+    size: Size,
+    kind: SegmentKind,
+    assoc_reg: Reg,
+}
+
+#[derive(Default)]
+pub struct Compiler {
     gen_instructions: Vec<Instruction>,
+    names_table: HashMap<String, (String, DataType, u8), RandomState<Hash64>>,
+    segments_table: Vec<Segment>,
+    cp: u32,
 }
 
 impl Compiler {
     pub fn new() -> Self {
-        Compiler {
-            gen_instructions: Vec::new(),
-        }
+        Self::default()
     }
 
     fn add_inst(&mut self, inst: Instruction) {
         self.gen_instructions.push(inst);
     }
+
+    fn add_data(&mut self, _name: &str, _value: Value) {}
 
     pub fn generate_instructions(&mut self, node: &Node) {
         match node {
@@ -251,17 +246,17 @@ impl Compiler {
                                 _ => panic!("expected int"),
                             };
                             self.add_inst(
-                                binary_instruction(op, data.register_number, Operand::Word(num))
+                                binary_instruction(*op, data.register_number, Operand::Word(num))
                                     .expect("unsupported op"),
                             );
                         } else {
                             panic!()
                         }
                     }
-                    (Node::Var { data, meta }, _) => {
+                    (Node::Var { data, meta: _ }, _) => {
                         if left.data().registers_need == 0 {
                             self.add_inst(
-                                binary_instruction(op, data.register_number, Operand::Word(0))
+                                binary_instruction(*op, data.register_number, Operand::Word(0))
                                     .expect("unsupported op"),
                             );
                         } else {
@@ -274,7 +269,7 @@ impl Compiler {
                         if rrn >= lrn {
                             self.add_inst(
                                 binary_instruction(
-                                    op,
+                                    *op,
                                     ldata.register_number,
                                     Operand::Reg(data.register_number),
                                 )
@@ -283,7 +278,7 @@ impl Compiler {
                         } else {
                             self.add_inst(
                                 binary_instruction(
-                                    op,
+                                    *op,
                                     data.register_number,
                                     Operand::Reg(rdata.register_number),
                                 )
@@ -298,7 +293,7 @@ impl Compiler {
                     _ => unimplemented!("unimplemented op"),
                 }
             }
-            Node::Grouping { node, data } => {
+            Node::Grouping { node, data: _ } => {
                 self.generate_instructions(node);
             }
             Node::Literal { lit, data } => {
@@ -309,7 +304,10 @@ impl Compiler {
                                 if *int > std::i32::MAX as i64 {
                                     unimplemented!("double words are unsupported now")
                                 }
-                                self.add_inst(Instruction::LDR(data.register_number, *int as Word));
+                                self.add_inst(Instruction::LDR(
+                                    data.register_number,
+                                    Operand::Word(*int as Word),
+                                ));
                             }
                             Number::Float(_float) => unimplemented!("floats are unsupported now"),
                         },
@@ -317,13 +315,13 @@ impl Compiler {
                         Literal::Bool(bool) => {
                             self.add_inst(Instruction::LDR(
                                 data.register_number,
-                                if *bool { 1 } else { 0 },
+                                Operand::Word(if *bool { 1 } else { 0 }),
                             ));
                         }
                     }
                 }
             }
-            Node::Unary { op, right, data } => {
+            Node::Unary { op, right, data: _ } => {
                 self.generate_instructions(right);
                 match op {
                     Operator::Minus => {}
@@ -331,9 +329,9 @@ impl Compiler {
                     _ => panic!("unexpected unary operator: {}", op),
                 }
             }
-            Node::Var { data, meta } => {
+            Node::Var { data, meta: _ } => {
                 if data.registers_need == 1 {
-                    self.add_inst(Instruction::LDR(data.register_number, 0));
+                    self.add_inst(Instruction::LDR(data.register_number, Operand::Word(0)));
                 }
             }
         };

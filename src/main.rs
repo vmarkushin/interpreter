@@ -1,17 +1,8 @@
-#![feature(box_syntax, try_trait, bool_to_option, try_blocks)]
+#![feature(box_syntax, bool_to_option, try_blocks, stmt_expr_attributes)]
 
-#[macro_use]
-extern crate err_derive;
-
-pub mod compiler;
-pub mod error;
-pub mod interpreter;
-pub mod syntax;
-pub mod tokenizer;
-
-use crate::interpreter::Interpreter;
-use crate::syntax::{display_arr, parse};
-use error::Error;
+use interpreter::error::Error;
+use interpreter::interpreter::Interpreter;
+use interpreter::syntax::{display_arr, parse};
 use log::error;
 use log::LevelFilter;
 use std::env::args;
